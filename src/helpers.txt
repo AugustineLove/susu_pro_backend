@@ -1,0 +1,15 @@
+import pkg from 'pg';
+const { Pool } = pkg;
+
+const pool = new Pool({
+  host: 'dpg-d2j8a9je5dus738pre30-a.oregon-postgres.render.com',
+  user: 'susu_pro_tgld_user',
+  password: 'JtHMjP7qvpkp9BxAY12hyariTIgPeJ8k',
+  database: 'susu_pro_tgld',
+  port: 5432,
+  ssl: {
+    rejectUnauthorized: false, 
+  },
+});
+
+export default pool;
