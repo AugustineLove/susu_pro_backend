@@ -6,6 +6,7 @@ import { customerRouter } from './customerRoutes.mjs';
 import { accountRouter } from './accountRoutes.mjs';
 import { transactionRouter } from './transactionRoutes.mjs';
 import authRouter from './auth/authRoutes.mjs';
+import { messageRouter } from './messageRoutes.mjs';
 
 const allRoutes = Router();
 
@@ -15,6 +16,7 @@ allRoutes.use('/api/companies', companyRoutes);
 allRoutes.use('/api/customers', customerRouter);
 allRoutes.use('/api/accounts', accountRouter);
 allRoutes.use('/api/transactions', transactionRouter);
+allRoutes.use('/api/messages', messageRouter);
 
 
 export default allRoutes;
