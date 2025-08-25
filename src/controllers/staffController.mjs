@@ -103,9 +103,19 @@ export const signInStaff = async (req, res) => {
   try {
     // Fetch staff by staff_id
     const staffQuery = `
-      SELECT id, staff_id, full_name, email, phone, role, company_id, password_hash
-      FROM staff
-      WHERE staff_id = $1
+      SELECT 
+        s.id, 
+        s.staff_id, 
+        s.full_name, 
+        s.email, 
+        s.phone, 
+        s.role, 
+        s.company_id, 
+        s.password_hash,
+        c.name AS company_name
+      FROM staff s
+      JOIN companies c ON s.company_id = c.id
+      WHERE s.staff_id = $1
     `;
     const staffResult = await pool.query(staffQuery, [staff_id]);
 
@@ -216,3 +226,4 @@ export const getAllStaffByCompany = async (req, res) => {
     });
   }
 };
+
