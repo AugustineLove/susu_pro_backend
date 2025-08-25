@@ -146,6 +146,7 @@ export const signInStaff = async (req, res) => {
       phone: staff.phone,
       role: staff.role,
       company_id: staff.company_id,
+      company_name: staff.company_name
     };
 
     return res.status(200).json({
@@ -226,5 +227,6 @@ export const getAllStaffByCompany = async (req, res) => {
     });
   }
 };
+
 
 
