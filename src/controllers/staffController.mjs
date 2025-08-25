@@ -112,7 +112,7 @@ export const signInStaff = async (req, res) => {
         s.role, 
         s.company_id, 
         s.password_hash,
-        c.name AS company_name
+        c.company_name AS company_name
       FROM staff s
       JOIN companies c ON s.company_id = c.id
       WHERE s.staff_id = $1
@@ -226,4 +226,5 @@ export const getAllStaffByCompany = async (req, res) => {
     });
   }
 };
+
 
