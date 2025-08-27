@@ -33,10 +33,26 @@ export const getTransactionsByStaff = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, amount, type, description, transaction_date, account_id, company_id 
-       FROM transactions 
-       WHERE created_by = $1 
-       ORDER BY transaction_date DESC`,
+      `SELECT 
+    t.id,
+    t.amount,
+    t.type,
+    t.description,
+    t.transaction_date,
+    t.account_id,
+    t.company_id,
+    a.account_type,
+    c.company_name,
+    s.full_name,
+    cu.location AS customer_location
+FROM transactions t
+JOIN accounts a ON t.account_id = a.id
+JOIN companies c ON t.company_id = c.id
+JOIN staff s ON t.created_by = s.id
+JOIN customers cu ON a.customer_id = cu.id
+WHERE t.created_by = $1
+ORDER BY t.transaction_date DESC;
+`,
       [staff_id]
     );
 
@@ -312,4 +328,5 @@ export const rejectTransaction = async (req, res) => {
   } finally {
     client.release();
   }
+
 };
