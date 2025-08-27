@@ -159,6 +159,7 @@ export const getRecentTransactions = async (req, res) => {
         t.amount,
         t.type,
         t.description,
+        t.unique_code,
         t.status,
         t.transaction_date,
         a.id,
@@ -332,5 +333,6 @@ export const rejectTransaction = async (req, res) => {
   }
 
 };
+
 
 
