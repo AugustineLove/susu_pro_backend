@@ -38,6 +38,7 @@ export const getTransactionsByStaff = async (req, res) => {
     t.amount,
     t.type,
     t.description,
+    t.status,
     t.transaction_date,
     t.account_id,
     t.company_id,
@@ -331,4 +332,5 @@ export const rejectTransaction = async (req, res) => {
   }
 
 };
+
 
