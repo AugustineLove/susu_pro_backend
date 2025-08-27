@@ -14,7 +14,7 @@ export const createCustomer = async (req, res) => {
     company_id,
     registered_by,
     date_of_birth,
-    area,
+    city,
   } = req.body;
 
   // Validate required fields
@@ -42,9 +42,9 @@ export const createCustomer = async (req, res) => {
       INSERT INTO customers (
         name, date_of_registration, id_card,
         gender, email, phone_number, next_of_kin, location, daily_rate,
-        company_id, registered_by, date_of_birth, area
+        company_id, registered_by, date_of_birth, city
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      RETURNING id, name, date_of_registration, id_card, gender, email, phone_number, next_of_kin, location, daily_rate, company_id, registered_by, created_at, date_of_birth, area
+      RETURNING id, name, date_of_registration, id_card, gender, email, phone_number, next_of_kin, location, daily_rate, company_id, registered_by, created_at, date_of_birth, city
     `;
 
     const values = [
@@ -60,7 +60,7 @@ export const createCustomer = async (req, res) => {
       company_id,
       registered_by,
       date_of_birth || null,
-      area || null
+      city || null
     ];
 
     const result = await pool.query(insertQuery, values);
