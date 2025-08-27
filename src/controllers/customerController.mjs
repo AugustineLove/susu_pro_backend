@@ -276,8 +276,8 @@ export const getCustomersByCompany = async (req, res) => {
 };
 
 export const udpateCustomerInfoMobile = async (req, res) => {
-  const { id } = req.params;
   const {
+    id,
     name,
     phone_number,
     next_of_kin,
@@ -286,8 +286,6 @@ export const udpateCustomerInfoMobile = async (req, res) => {
     gender,
     date_of_birth
   } = req.body;
-  
-  console.log(id, name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth);
 
   try {
     const result = await pool.query(
@@ -317,4 +315,5 @@ export const udpateCustomerInfoMobile = async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
 
