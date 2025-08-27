@@ -8,4 +8,5 @@ customerRouter.post('/create', createCustomer);
 customerRouter.get('/staff/:staffId', getCustomersByStaff);
 customerRouter.get('/company/:companyId', getCustomersByCompany);
 customerRouter.delete('/delete', deleteCustomer);
-customerRouter.put('/update-mobile/:customerId', udpateCustomerInfoMobile); 
+customerRouter.put('/update-mobile', udpateCustomerInfoMobile); 
+
