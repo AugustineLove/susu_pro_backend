@@ -8,6 +8,7 @@ export const createCustomer = async (req, res) => {
     gender,
     email,
     phone_number,
+    account_number,
     next_of_kin,
     location,
     daily_rate,
@@ -42,9 +43,9 @@ export const createCustomer = async (req, res) => {
       INSERT INTO customers (
         name, date_of_registration, id_card,
         gender, email, phone_number, next_of_kin, location, daily_rate,
-        company_id, registered_by, date_of_birth, city
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      RETURNING id, name, date_of_registration, id_card, gender, email, phone_number, next_of_kin, location, daily_rate, company_id, registered_by, created_at, date_of_birth, city
+        company_id, registered_by, date_of_birth, city, account_number
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING id, name, date_of_registration, id_card, gender, email, phone_number, next_of_kin, location, daily_rate, company_id, registered_by, created_at, date_of_birth, city, account_number
     `;
 
     const values = [
@@ -60,7 +61,8 @@ export const createCustomer = async (req, res) => {
       company_id,
       registered_by,
       date_of_birth || null,
-      city || null
+      city || null,
+      account_number || null
     ];
 
     const result = await pool.query(insertQuery, values);
@@ -146,7 +148,6 @@ export const getCustomersByStaff = async (req, res) => {
 };
 
 
-// GET /api/customers/company/:companyId
 
 export const getCustomersByCompany = async (req, res) => {
   const { companyId } = req.params;
@@ -287,6 +288,8 @@ export const udpateCustomerInfoMobile = async (req, res) => {
     date_of_birth
   } = req.body;
 
+  console.log(id, name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth);
+
   try {
     const result = await pool.query(
       `
@@ -315,5 +318,3 @@ export const udpateCustomerInfoMobile = async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
-
-
