@@ -2,7 +2,7 @@ import axios from 'axios';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const sendCustomerMessage = async (req, res) => {
+export const sendCustomerMessage = async (req, res) => {
     console.log("sending message")
     const { messageTo, messageFrom, message } = req.body;
     const data = {
@@ -27,8 +27,5 @@ const sendCustomerMessage = async (req, res) => {
     })
     .catch(function (error) {
     console.log(error);
-});
-
+  });
 }
-
-export default sendCustomerMessage;
