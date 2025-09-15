@@ -1,13 +1,34 @@
+import admin from "firebase-admin";
+import dotenv from "dotenv";
 
-import admin from 'firebase-admin';
-import dotenv from 'dotenv';
 dotenv.config();
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
 
-const db = admin.firestore();
+let serviceAccount;
+
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  } catch (e) {
+    console.error("FIREBASE_SERVICE_ACCOUNT is not valid JSON");
+  }
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+  // safer option: store JSON as base64 in Render
+  const jsonStr = Buffer.from(
+    process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
+    "base64"
+  ).toString("utf8");
+  serviceAccount = JSON.parse(jsonStr);
+} else {
+  console.error("No Firebase service account found in env vars");
+}
+
+if (!admin.apps.length && serviceAccount) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
+
+export const db = admin.firestore();
 
 export const sendChatMessage = async (req, res) => {
   try {
