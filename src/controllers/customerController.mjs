@@ -159,6 +159,7 @@ export const getCustomersByCompany = async (req, res) => {
         c.id AS customer_id,
         c.name,
         c.phone_number,
+        c.account_number,
         c.email,
         c.location,
         c.daily_rate,
