@@ -75,25 +75,33 @@ export const getAllCompanies = async (req, res) => {
 export const getCompanyStats = async (req, res) => {
   try {
     const companyId = req.user.id;  //JWT middleware
+const customerQuery = 'SELECT COUNT(*) FROM customers WHERE company_id = $1';
+const transactionQuery = 'SELECT COUNT(*) FROM transactions WHERE company_id = $1';
+const balanceQuery = 'SELECT COALESCE(SUM(balance), 0) AS total_balance FROM accounts WHERE company_id = $1';
+const commissionQuery = 'SELECT COALESCE(SUM(amount), 0) AS total_commissions FROM commissions WHERE company_id = $1';
 
-    const customerQuery = 'SELECT COUNT(*) FROM customers WHERE company_id = $1';
-    const transactionQuery = 'SELECT COUNT(*) FROM transactions WHERE company_id = $1';
-    const balanceQuery = 'SELECT COALESCE(SUM(balance), 0) AS total_balance FROM accounts WHERE company_id = $1';
+const [
+  { rows: customers },
+  { rows: transactions },
+  { rows: balances },
+  { rows: commissions }
+] = await Promise.all([
+  pool.query(customerQuery, [companyId]),
+  pool.query(transactionQuery, [companyId]),
+  pool.query(balanceQuery, [companyId]),
+  pool.query(commissionQuery, [companyId])
+]);
 
-    const [{ rows: customers }, { rows: transactions }, { rows: balances }] = await Promise.all([
-      pool.query(customerQuery, [companyId]),
-      pool.query(transactionQuery, [companyId]),
-      pool.query(balanceQuery, [companyId])
-    ]);
+res.json({
+  status: 'success',
+  data: {
+    totalCustomers: parseInt(customers[0].count),
+    totalTransactions: parseInt(transactions[0].count),
+    totalBalance: parseFloat(balances[0].total_balance),
+    totalCommissions: parseFloat(commissions[0].total_commissions)
+  }
+});
 
-    res.json({
-      status: 'success',
-      data: {
-        totalCustomers: parseInt(customers[0].count),
-        totalTransactions: parseInt(transactions[0].count),
-        totalBalance: parseFloat(balances[0].total_balance)
-      }
-    });
   } catch (error) {
     console.error('Dashboard error:', error);
     res.status(500).json({ status: 'error', message: 'Internal server error' });
