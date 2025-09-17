@@ -265,7 +265,7 @@ export const approveTransaction = async (req, res) => {
       `UPDATE transactions 
        SET status = 'approved'
        WHERE id = $1`,
-      [commission, amount, transaction.id]
+      [transaction.id]
     );
 
     await client.query("COMMIT");
@@ -350,4 +350,5 @@ export const rejectTransaction = async (req, res) => {
     client.release();
   }
 };
+
 
