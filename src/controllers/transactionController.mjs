@@ -163,6 +163,7 @@ export const getRecentTransactions = async (req, res) => {
         t.transaction_date,
         a.id,
         c.name AS customer_name,
+        c.phone_number AS customer_phone,
         s.full_name as staff_name
       FROM 
         transactions t
@@ -260,22 +261,14 @@ export const approveTransaction = async (req, res) => {
       [totalDeduction, account.id]
     );
 
-    // 6. Record commission
-await client.query(
-  `INSERT INTO commissions (transaction_id, account_id, customer_id, company_id, amount)
-   VALUES ($1, $2, 
-     (SELECT customer_id FROM accounts WHERE id = $2), 
-     (SELECT company_id FROM accounts WHERE id = $2), 
-     $3)`,
-  [transaction.id, account.id, commission]
-);
-
-// 7. Update transaction
+    // 6. Update transaction
     await client.query(
       `UPDATE transactions 
-       SET status = 'approved'
-       WHERE id = $1`,
-      [transaction.id]
+       SET status = 'approved', 
+           commission = $1, 
+           net_amount = $2 
+       WHERE id = $3`,
+      [commission, amount, transaction.id]
     );
 
     await client.query("COMMIT");
@@ -360,6 +353,3 @@ export const rejectTransaction = async (req, res) => {
     client.release();
   }
 };
-
-
-
