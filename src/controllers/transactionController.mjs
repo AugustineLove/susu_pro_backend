@@ -45,8 +45,7 @@ export const getTransactionsByStaff = async (req, res) => {
     a.account_type,
     c.company_name,
     s.full_name,
-    cu.location AS customer_location,
-    cu.name AS customer_name
+    cu.location AS customer_location
 FROM transactions t
 JOIN accounts a ON t.account_id = a.id
 JOIN companies c ON t.company_id = c.id
@@ -159,8 +158,8 @@ export const getRecentTransactions = async (req, res) => {
         t.amount,
         t.type,
         t.description,
-        t.unique_code,
         t.status,
+        t.unique_code,
         t.transaction_date,
         a.id,
         c.name AS customer_name,
@@ -196,16 +195,14 @@ export const approveTransaction = async (req, res) => {
 
     // 1. Fetch transaction
     const txRes = await client.query(
-      `SELECT id, account_id, amount, type, status FROM transactions WHERE id = $1`,
+      `SELECT id, account_id, amount, type, status 
+       FROM transactions WHERE id = $1`,
       [transactionId]
     );
 
     if (txRes.rowCount === 0) {
       await client.query("ROLLBACK");
-      return res.status(404).json({
-        status: "fail",
-        message: "Transaction not found",
-      });
+      return res.status(404).json({ status: "fail", message: "Transaction not found" });
     }
 
     const transaction = txRes.rows[0];
@@ -221,40 +218,56 @@ export const approveTransaction = async (req, res) => {
 
     const amount = parseFloat(transaction.amount);
 
-    // 3. Check balance
+    // 3. Get account + customer (to fetch daily_rate)
     const accRes = await client.query(
-      `SELECT id, balance FROM accounts WHERE id = $1`,
+      `SELECT a.id, a.balance, c.daily_rate
+       FROM accounts a
+       JOIN customers c ON c.id = a.customer_id
+       WHERE a.id = $1`,
       [transaction.account_id]
     );
 
     if (accRes.rowCount === 0) {
       await client.query("ROLLBACK");
-      return res.status(404).json({
-        status: "fail",
-        message: "Associated account not found",
-      });
+      return res.status(404).json({ status: "fail", message: "Associated account not found" });
     }
 
     const account = accRes.rows[0];
+    const dailyRate = parseFloat(account.daily_rate);
 
-    if (amount > account.balance) {
+    if (!dailyRate || dailyRate <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ status: "fail", message: "Invalid daily rate for customer" });
+    }
+
+    // 4. Calculate commission
+    const pageLimit = 30 * dailyRate; // customer portion per page
+    const pages = Math.ceil(amount / pageLimit);
+    const commission = pages * dailyRate;
+    const totalDeduction = amount + commission;
+
+    if (totalDeduction > account.balance) {
       await client.query("ROLLBACK");
       return res.status(400).json({
         status: "fail",
-        message: "Insufficient balance for approval",
+        message: "Insufficient balance (including commission)",
       });
     }
 
-    // 4. Deduct balance
+    // 5. Deduct from account
     await client.query(
       `UPDATE accounts SET balance = balance - $1 WHERE id = $2`,
-      [amount, account.id]
+      [totalDeduction, account.id]
     );
 
-    // 5. Update transaction status
+    // 6. Update transaction
     await client.query(
-      `UPDATE transactions SET status = 'approved' WHERE id = $1`,
-      [transaction.id]
+      `UPDATE transactions 
+       SET status = 'approved', 
+           commission = $1, 
+           net_amount = $2 
+       WHERE id = $3`,
+      [commission, amount, transaction.id]
     );
 
     await client.query("COMMIT");
@@ -262,6 +275,12 @@ export const approveTransaction = async (req, res) => {
     return res.status(200).json({
       status: "success",
       message: "Withdrawal approved and processed",
+      data: {
+        received: amount,
+        commission,
+        deducted: totalDeduction,
+        newBalance: parseFloat(account.balance) - totalDeduction,
+      },
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -275,6 +294,7 @@ export const approveTransaction = async (req, res) => {
     client.release();
   }
 };
+
 
 export const rejectTransaction = async (req, res) => {
   const transactionId = req.params.id;
@@ -331,8 +351,4 @@ export const rejectTransaction = async (req, res) => {
   } finally {
     client.release();
   }
-
 };
-
-
-
