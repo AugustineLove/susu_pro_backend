@@ -45,7 +45,8 @@ export const getTransactionsByStaff = async (req, res) => {
     a.account_type,
     c.company_name,
     s.full_name,
-    cu.location AS customer_location
+    cu.location AS customer_location,
+    cu.name AS customer_name
 FROM transactions t
 JOIN accounts a ON t.account_id = a.id
 JOIN companies c ON t.company_id = c.id
@@ -360,3 +361,4 @@ export const rejectTransaction = async (req, res) => {
     client.release();
   }
 };
+
