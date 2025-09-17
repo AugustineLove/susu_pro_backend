@@ -255,21 +255,28 @@ export const approveTransaction = async (req, res) => {
       });
     }
 
-    // 5. Deduct from account
     await client.query(
-      `UPDATE accounts SET balance = balance - $1 WHERE id = $2`,
-      [totalDeduction, account.id]
-    );
+  `UPDATE accounts SET balance = balance - $1 WHERE id = $2`,
+  [totalDeduction, account.id]
+);
 
-    // 6. Update transaction
-    await client.query(
-      `UPDATE transactions 
-       SET status = 'approved', 
-           commission = $1, 
-           net_amount = $2 
-       WHERE id = $3`,
-      [commission, amount, transaction.id]
-    );
+// 6. Record commission
+await client.query(
+  `INSERT INTO commissions (transaction_id, account_id, customer_id, company_id, amount)
+   VALUES ($1, $2, 
+     (SELECT customer_id FROM accounts WHERE id = $2), 
+     (SELECT company_id FROM accounts WHERE id = $2), 
+     $3)`,
+  [transaction.id, account.id, commission]
+);
+
+// 7. Update transaction
+await client.query(
+  `UPDATE transactions 
+   SET status = 'approved'
+   WHERE id = $1`,
+  [transaction.id]
+);
 
     await client.query("COMMIT");
 
