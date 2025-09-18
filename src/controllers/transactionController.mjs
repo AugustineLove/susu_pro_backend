@@ -243,9 +243,10 @@ export const approveTransaction = async (req, res) => {
     }
 
     // 4. Calculate commission
-    const pageLimit = 30 * dailyRate; // customer portion per page
-    const pages = Math.ceil(amount / pageLimit);
-    const commission = pages * dailyRate;
+    // const pageLimit = 30 * dailyRate; // customer portion per page
+    // const pages = Math.ceil(amount / pageLimit);
+    // const commission = pages * dailyRate;
+    const commission = amount / 31;
     const totalDeduction = amount + commission;
 
     if (totalDeduction > account.balance) {
