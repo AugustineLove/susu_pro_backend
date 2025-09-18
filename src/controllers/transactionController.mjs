@@ -280,6 +280,62 @@ await client.query(
   [transaction.id]
 );
 
+// 6. Deduct from today's budgets (float)
+const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+// Get all budgets for today
+const budgetRes = await client.query(
+  `SELECT id, allocated, spent
+   FROM budgets
+   WHERE company_id = (SELECT company_id FROM accounts WHERE id = $1)
+   AND date = $2
+   ORDER BY id ASC`, // order to ensure consistent deduction
+  [account.id, today]
+);
+
+if (budgetRes.rowCount === 0) {
+  await client.query("ROLLBACK");
+  return res.status(400).json({
+    status: "fail",
+    message: "No budget set for today",
+  });
+}
+
+let remaining = amount;
+const budgets = budgetRes.rows;
+
+for (const budget of budgets) {
+  const available = budget.allocated - budget.spent;
+
+  if (available <= 0) continue; // skip exhausted budgets
+
+  if (remaining <= available) {
+    // Deduct partially and finish
+    await client.query(
+      `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
+      [remaining, budget.id]
+    );
+    remaining = 0;
+    break;
+  } else {
+    // Deduct everything from this budget and move on
+    await client.query(
+      `UPDATE budgets SET spent = allocated WHERE id = $1`,
+      [budget.id]
+    );
+    remaining -= available;
+  }
+}
+
+if (remaining > 0) {
+  // Not enough across all floats
+  await client.query("ROLLBACK");
+  return res.status(400).json({
+    status: "fail",
+    message: "Insufficient budget across today's floats",
+  });
+}
+
     await client.query("COMMIT");
 
     return res.status(200).json({

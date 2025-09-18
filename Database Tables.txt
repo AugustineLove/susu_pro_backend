@@ -1,0 +1,21 @@
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE public.companies (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_name VARCHAR(255) NOT NULL,
+    company_email VARCHAR(255) NOT NULL UNIQUE,
+    company_phone VARCHAR(20) NOT NULL,
+    company_address TEXT NOT NULL,
+    company_website VARCHAR(255),
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    signup_date TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    has_paid BOOLEAN DEFAULT false,
+    two_factor_enabled BOOLEAN DEFAULT false,
+    two_factor_secret TEXT,
+    login_notifications BOOLEAN DEFAULT false,
+    email_notifications BOOLEAN DEFAULT false,
+    sms_notifications BOOLEAN DEFAULT false,
+    show_withdrawal_alerts BOOLEAN DEFAULT false,
+    receive_system_updates BOOLEAN DEFAULT false
+);
