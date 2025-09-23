@@ -63,7 +63,8 @@ export const loginCompany = async (req, res) => {
         website: company.company_website,
         two_factor_enabled: company.two_factor_enabled,
         login_notifications: company.login_notifications,
-        has_paid : company.has_paid
+        has_paid : company.has_paid,
+        signupDate: company.signup_date
       }
     });
 
