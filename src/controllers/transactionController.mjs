@@ -73,13 +73,13 @@ ORDER BY t.transaction_date DESC;
 };
 
 export const getTransactionsByCustomer = async (req, res) => {
-  const { customer_id } = req.params;
+  const { customerId } = req.params;
 
   try {
     // Get all account IDs for the customer
     const accountsResult = await pool.query(
       'SELECT id FROM accounts WHERE customer_id = $1',
-      [customer_id]
+      [customerId]
     );
 
     if (accountsResult.rows.length === 0) {
@@ -93,9 +93,11 @@ export const getTransactionsByCustomer = async (req, res) => {
 
     // Fetch transactions for those account IDs
     const transactionsResult = await pool.query(
-      `SELECT * FROM transactions 
-       WHERE account_id = ANY($1::uuid[]) 
-       ORDER BY transaction_date DESC`,
+      `SELECT t.*, a.account_type
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
+      WHERE t.account_id = ANY($1::uuid[])
+      ORDER BY t.transaction_date DESC;`,
       [accountIds]
     );
 
@@ -165,7 +167,8 @@ export const getRecentTransactions = async (req, res) => {
         a.id,
         c.name AS customer_name,
         c.phone_number AS customer_phone,
-        s.full_name as staff_name
+        s.full_name as staff_name,
+        s.id as staff_id
       FROM 
         transactions t
       JOIN

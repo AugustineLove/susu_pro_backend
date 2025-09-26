@@ -74,7 +74,8 @@ export const getAllCompanies = async (req, res) => {
 
 export const getCompanyStats = async (req, res) => {
   try {
-    const companyId = req.user.id;  //JWT middleware
+    const companyId = req.user.type === 'staff' ? req.user.companyId : req.user.id;
+    console.log('Fetching stats for company ID:', companyId);
 const customerQuery = 'SELECT COUNT(*) FROM customers WHERE company_id = $1';
 const transactionQuery = 'SELECT COUNT(*) FROM transactions WHERE company_id = $1';
 const balanceQuery = 'SELECT COALESCE(SUM(balance), 0) AS total_balance FROM accounts WHERE company_id = $1';

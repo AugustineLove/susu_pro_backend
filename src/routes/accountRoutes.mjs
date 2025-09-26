@@ -5,4 +5,4 @@ import { createAccount, getAccountsByCustomer } from "../controllers/accountCont
 export const accountRouter = Router();
 
 accountRouter.post('/create', createAccount);
-accountRouter.get('/customer/:customer_id', getAccountsByCustomer);
+accountRouter.get('/customer/:customerId', getAccountsByCustomer);

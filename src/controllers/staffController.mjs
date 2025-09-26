@@ -209,7 +209,7 @@ export const getAllStaffByCompany = async (req, res) => {
 
   try {
     const query = `
-      SELECT id, staff_id, full_name, email, phone, role, company_id, created_at
+      SELECT *
       FROM staff
       WHERE company_id = $1
     `;

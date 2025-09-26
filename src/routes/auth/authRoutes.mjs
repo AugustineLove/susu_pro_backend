@@ -1,7 +1,7 @@
 import Router from 'express';
-import { loginCompany } from '../../controllers/auth/loginController.mjs';
+import { loginUser } from '../../controllers/auth/loginController.mjs';
 const authRouter = Router();
 
-authRouter.post('/login-company', loginCompany);
+authRouter.post('/login-company', loginUser);
 
 export default authRouter;

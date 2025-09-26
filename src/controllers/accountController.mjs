@@ -30,14 +30,14 @@ export const createAccount = async (req, res) => {
 };
 
 export const getAccountsByCustomer = async (req, res) => {
-  const { customer_id } = req.params;
+  const { customerId } = req.params;
   try {
     const accounts = await pool.query(
       `SELECT 
-         id, account_type, balance, created_at, company_id, created_by 
+         *
        FROM accounts 
        WHERE customer_id = $1`,
-      [customer_id]
+      [customerId]
     );
 
     if (accounts.rows.length === 0) {

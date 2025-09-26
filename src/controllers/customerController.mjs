@@ -122,6 +122,27 @@ export const deleteCustomer = async (req, res) => {
   }
 }
 
+export const getCustomerById = async (req, res) => {
+  const { customerId } = req.params;
+  console.log(customerId)
+  try {
+    const result = await pool.query(
+      `SELECT * FROM customers WHERE id = $1`,
+      [customerId]
+    );
+    return res.status(200).json({
+      status: 'success',
+      count: result.rows.length,
+      data: result.rows[0],
+    });
+  }
+  catch (error) {
+      console.error('Error fetching customer by ID:', error.message);
+      return res.status(500).json({
+        status: 'error',})
+  }
+}
+
 // GET /api/customers/staff/:staffId
 
 export const getCustomersByStaff = async (req, res) => {
@@ -146,7 +167,6 @@ export const getCustomersByStaff = async (req, res) => {
     });
   }
 };
-
 
 
 export const getCustomersByCompany = async (req, res) => {

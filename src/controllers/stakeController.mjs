@@ -2,7 +2,7 @@ import pool from "../db.mjs";
 
 export const stakeMoney = async (req, res) => {
   const { account_id, amount, staked_by, company_id, transaction_type, description, unique_code } = req.body;
-  console.log(`Staking money:`, req.body);
+
 
   if (!account_id || !amount || !staked_by || !company_id || !transaction_type) {
     return res.status(400).json({
