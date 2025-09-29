@@ -6,7 +6,7 @@ import { verifyCompanyToken } from "../middlewares/verifyCompany.mjs";
 
 export const customerRouter = Router();
 
-customerRouter.post('/create',verifyCompanyToken, requirePermission('CUSTOMER_CREATE'), createCustomer);
+customerRouter.post('/create',createCustomer);
 customerRouter.get('/staff/:staffId', getCustomersByStaff);
 customerRouter.get('/company/:companyId', getCustomersByCompany);
 customerRouter.delete('/delete', deleteCustomer);
