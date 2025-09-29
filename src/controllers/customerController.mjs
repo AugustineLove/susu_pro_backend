@@ -140,7 +140,7 @@ export const getCustomerById = async (req, res) => {
   console.log(customerId)
   try {
     const result = await pool.query(
-      `SELECT * FROM customers WHERE company_id = $1 AND is_deleted = false`,
+      `SELECT * FROM customers WHERE id = $1 AND is_deleted = false`,
       [customerId]
     );
     return res.status(200).json({
