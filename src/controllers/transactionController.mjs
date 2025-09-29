@@ -52,7 +52,7 @@ JOIN accounts a ON t.account_id = a.id
 JOIN companies c ON t.company_id = c.id
 JOIN staff s ON t.created_by = s.id
 JOIN customers cu ON a.customer_id = cu.id
-WHERE t.created_by = $1 AND is_deleted = false
+WHERE t.created_by = $1 AND t.is_deleted = false
 ORDER BY t.transaction_date DESC;
 `,
       [staff_id]
@@ -133,7 +133,7 @@ export const getCompanyTransactions = async (req, res) => {
        LEFT JOIN accounts a ON t.account_id = a.id
        LEFT JOIN customers c ON a.customer_id = c.id
        LEFT JOIN staff s ON t.created_by = s.id
-       WHERE t.company_id = $1 AND is_deleted = false
+       WHERE t.company_id = $1 AND t.is_deleted = false
        ORDER BY t.transaction_date DESC`,
       [company_id]
     );
@@ -178,7 +178,7 @@ export const getRecentTransactions = async (req, res) => {
       JOIN 
         customers c ON a.customer_id = c.id
       WHERE 
-        t.company_id = $1 AND is_deleted = false
+        t.company_id = $1 AND t.is_deleted = false
       ORDER BY 
         t.transaction_date DESC
     `, values: [company_id], statement_timeout: 120000});
