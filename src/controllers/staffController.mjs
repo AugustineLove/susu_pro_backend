@@ -1,10 +1,10 @@
 import bcrypt from 'bcrypt';
 import pool from '../db.mjs';
+import { defaultPermissions } from '../constants/defualtPermissions.mjs';
 
 export const createStaff = async (req, res) => {
   const { full_name, email, phone, role, password, company_id, staff_id } = req.body;
 
-  console.log(full_name, email, phone, role, password, company_id, staff_id);
   if (!full_name || !email || !phone || !role || !password || !company_id || !staff_id) {
     return res.status(400).json({
       status: 'fail',
@@ -12,7 +12,7 @@ export const createStaff = async (req, res) => {
     });
   }
 
-   // ✅ Check if company exists
+  // ✅ Check if company exists
   const companyCheck = await pool.query(
     'SELECT id FROM companies WHERE id = $1',
     [company_id]
@@ -26,7 +26,7 @@ export const createStaff = async (req, res) => {
   }
 
   try {
-    // Check email uniqueness
+    // ✅ Check email uniqueness
     const checkEmail = await pool.query(
       'SELECT * FROM staff WHERE email = $1 AND company_id = $2',
       [email, company_id]
@@ -38,42 +38,45 @@ export const createStaff = async (req, res) => {
       });
     }
 
-  // Check staff ID uniqueness per company
-const checkStaffId = await pool.query(
-  'SELECT * FROM staff WHERE staff_id = $1 AND company_id = $2',
-  [staff_id, company_id]
-);
-if (checkStaffId.rows.length > 0) {
-  return res.status(409).json({
-    status: 'fail',
-    message: 'A staff with this staff ID already exists in this company.',
-  });
-}
+    // ✅ Check staff ID uniqueness
+    const checkStaffId = await pool.query(
+      'SELECT * FROM staff WHERE staff_id = $1 AND company_id = $2',
+      [staff_id, company_id]
+    );
+    if (checkStaffId.rows.length > 0) {
+      return res.status(409).json({
+        status: 'fail',
+        message: 'A staff with this staff ID already exists in this company.',
+      });
+    }
 
-// Hash password
-const saltRounds = 10;
-const password_hash = await bcrypt.hash(password, saltRounds);
+    // ✅ Hash password
+    const saltRounds = 10;
+    const password_hash = await bcrypt.hash(password, saltRounds);
 
-// Insert staff
-const insertQuery = `
-  INSERT INTO staff (
-    staff_id, full_name, email, phone, role, company_id, password_hash
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-  RETURNING id, staff_id, full_name, email, phone, role, company_id, created_at
-`;
+    // ✅ Assign permissions from role
+    const rolePermissions = defaultPermissions[role] || {};
 
-const values = [
-  staff_id,
-  full_name,
-  email,
-  phone,
-  role,
-  company_id,
-  password_hash,
-];
+    // ✅ Insert staff
+    const insertQuery = `
+      INSERT INTO staff (
+        staff_id, full_name, email, phone, role, company_id, password_hash, permissions
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+      RETURNING id, staff_id, full_name, email, phone, role, company_id, permissions, created_at
+    `;
 
-const result = await pool.query(insertQuery, values);
+    const values = [
+      staff_id,
+      full_name,
+      email,
+      phone,
+      role,
+      company_id,
+      password_hash,
+      JSON.stringify(rolePermissions),
+    ];
 
+    const result = await pool.query(insertQuery, values);
 
     return res.status(201).json({
       status: 'success',
@@ -88,7 +91,6 @@ const result = await pool.query(insertQuery, values);
     });
   }
 };
-
 export const signInStaff = async (req, res) => {
   const { staff_id, password } = req.body;
 

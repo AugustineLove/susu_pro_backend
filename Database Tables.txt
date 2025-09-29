@@ -19,3 +19,23 @@ CREATE TABLE public.companies (
     show_withdrawal_alerts BOOLEAN DEFAULT false,
     receive_system_updates BOOLEAN DEFAULT false
 );
+
+
+
+UPDATE companies
+SET permissions = jsonb_set(
+  permissions,
+  '{ALTER_ACCOUNT}',      -- key path
+  'true'::jsonb,          -- new value as jsonb
+  true                    -- create if not exists
+);
+
+UPDATE staff
+SET permissions = jsonb_set(
+  COALESCE(permissions, '{}'::jsonb), -- handle NULL safely
+  '{ALTER_ACCOUNT}', 
+  'true'::jsonb, 
+  true
+)
+WHERE role = 'mobile banker';
+

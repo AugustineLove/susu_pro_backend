@@ -8,7 +8,7 @@ export const getTransactionsByAccount = async (req, res) => {
     const result = await pool.query(
       `SELECT id, amount, type, description, transaction_date, created_by, company_id 
        FROM transactions 
-       WHERE account_id = $1 
+       WHERE account_id = $1 AND is_deleted = false
        ORDER BY transaction_date DESC`,
       [account_id]
     );
@@ -52,7 +52,7 @@ JOIN accounts a ON t.account_id = a.id
 JOIN companies c ON t.company_id = c.id
 JOIN staff s ON t.created_by = s.id
 JOIN customers cu ON a.customer_id = cu.id
-WHERE t.created_by = $1
+WHERE t.created_by = $1 AND is_deleted = false
 ORDER BY t.transaction_date DESC;
 `,
       [staff_id]
@@ -78,7 +78,7 @@ export const getTransactionsByCustomer = async (req, res) => {
   try {
     // Get all account IDs for the customer
     const accountsResult = await pool.query(
-      'SELECT id FROM accounts WHERE customer_id = $1',
+      'SELECT id FROM accounts WHERE customer_id = $1 AND is_deleted = false',
       [customerId]
     );
 
@@ -133,7 +133,7 @@ export const getCompanyTransactions = async (req, res) => {
        LEFT JOIN accounts a ON t.account_id = a.id
        LEFT JOIN customers c ON a.customer_id = c.id
        LEFT JOIN staff s ON t.created_by = s.id
-       WHERE t.company_id = $1
+       WHERE t.company_id = $1 AND is_deleted = false
        ORDER BY t.transaction_date DESC`,
       [company_id]
     );
@@ -178,7 +178,7 @@ export const getRecentTransactions = async (req, res) => {
       JOIN 
         customers c ON a.customer_id = c.id
       WHERE 
-        t.company_id = $1
+        t.company_id = $1 AND is_deleted = false
       ORDER BY 
         t.transaction_date DESC
     `, values: [company_id], statement_timeout: 120000});

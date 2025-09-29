@@ -84,50 +84,63 @@ export const createCustomer = async (req, res) => {
 
 
 export const deleteCustomer = async (req, res) => {
-    
-    const { customer_id } = req.body;
-    console.log(customer_id);
-    if(!customer_id){
+  const { customer_id } = req.body;
+  if (!customer_id) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'customer_id is required'
+    });
+  }
+
+  try {
+    // Check if customer exists
+    const customerCheck = await pool.query(
+      'SELECT * FROM customers WHERE id = $1',
+      [customer_id]
+    );
+
+    if (customerCheck.rows.length === 0) {
       return res.status(400).json({
         status: 'fail',
-        message: 'customer_id, is required'
+        message: 'Invalid customer_id'
       });
     }
 
-    try {
-      // Check if customer exits
-      const customerCheck = await pool.query('Select * from customers where id = $1', [customer_id]);
-      if(customerCheck.rows.length ===0){
-        return res.status(400).json({
-          status: 'fail',
-          message: 'Invalid customer_id'
-        })
-      }
+    // Soft delete customer + related accounts + transactions
+    const now = new Date();
+    await pool.query(
+      'UPDATE transactions SET is_deleted = true, deleted_at = $1 WHERE customer_id = $2',
+      [now, customer_id]
+    );
+    await pool.query(
+      'UPDATE accounts SET is_deleted = true, deleted_at = $1 WHERE customer_id = $2',
+      [now, customer_id]
+    );
+    await pool.query(
+      'UPDATE customers SET is_deleted = true, deleted_at = $1 WHERE id = $2',
+      [now, customer_id]
+    );
 
-      const deleteQuery = `DELETE from customers where id = $1`;
-      const result = await pool.query(deleteQuery, [customer_id]);
-
-      return res.status(201).json({
-        status: 'success',
-        message: 'Customer deleted successfully',
-        data: result.rows[0],
-      })
+    return res.status(200).json({
+      status: 'success',
+      message: 'Customer deleted successfully (soft delete)',
+    });
   } catch (error) {
-    console.log('Error deleting customer: ', error.message);
+    console.error('Error deleting customer: ', error.message);
     return res.status(500).json({
       status: 'error',
       message: 'Internal server error.',
-    })
-    
+    });
   }
-}
+};
+
 
 export const getCustomerById = async (req, res) => {
   const { customerId } = req.params;
   console.log(customerId)
   try {
     const result = await pool.query(
-      `SELECT * FROM customers WHERE id = $1`,
+      `SELECT * FROM customers WHERE company_id = $1 AND is_deleted = false`,
       [customerId]
     );
     return res.status(200).json({
@@ -150,7 +163,7 @@ export const getCustomersByStaff = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT * FROM customers WHERE registered_by = $1`,
+      `SELECT * FROM customers WHERE registered_by = $1 AND is_deleted = false`,
       [staffId]
     );
 
@@ -185,6 +198,9 @@ export const getCustomersByCompany = async (req, res) => {
         c.daily_rate,
         c.next_of_kin,
         c.id_card,
+        c.city,
+        c.registered_by,
+        c.date_of_birth,
         c.gender,
         c.date_of_registration,
         s.full_name AS registered_by_name,
@@ -212,7 +228,7 @@ export const getCustomersByCompany = async (req, res) => {
           '[]'
         ) AS accounts
 
-      FROM customers c
+      FROM customers c 
       JOIN staff s ON c.registered_by = s.id
       LEFT JOIN accounts a ON c.id = a.customer_id
 
@@ -264,7 +280,7 @@ export const getCustomersByCompany = async (req, res) => {
       ) AS total_stakes_customer ON c.id = total_stakes_customer.customer_id
 
 
-      WHERE c.company_id = $1
+      WHERE c.company_id = $1  AND c.is_deleted = false
       GROUP BY
         c.id,
         c.name,
@@ -336,6 +352,80 @@ export const udpateCustomerInfoMobile = async (req, res) => {
     res.json({ success: true, customer: result.rows[0] });
   } catch (err) {
     console.error("Error updating customer:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
+export const updateCustomer = async (req, res) => {
+  const {
+    name,
+    date_of_registration,
+    id_card,
+    gender,
+    email,
+    phone_number,
+    next_of_kin,
+    location,
+    daily_rate,
+    company_id,
+    registered_by,
+    date_of_birth,
+    city,
+    account_number,
+    customer_id,
+  } = req.body;
+
+  try {
+    console.log(name, customer_id);
+    const query = `
+      UPDATE customers
+      SET
+        name = $1,
+        date_of_registration = $2,
+        id_card = $3,
+        gender = $4,
+        email = $5,
+        phone_number = $6,
+        next_of_kin = $7,
+        location = $8,
+        daily_rate = $9,
+        company_id = $10,
+        registered_by = $11,
+        date_of_birth = $12,
+        city = $13,
+        account_number = $14
+      WHERE id = $15
+      RETURNING *;
+    `;
+
+    const values = [
+      name,
+      date_of_registration,
+      id_card,
+      gender,
+      email,
+      phone_number,
+      next_of_kin,
+      location,
+      daily_rate,
+      company_id,
+      registered_by,
+      date_of_birth,
+      city,
+      account_number,
+      customer_id,
+    ];
+
+    const { rows } = await pool.query(query, values);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    console.error("Error updating customer:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };

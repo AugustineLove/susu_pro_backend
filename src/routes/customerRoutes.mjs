@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createCustomer, deleteCustomer, getCustomerById, getCustomersByCompany, getCustomersByStaff, udpateCustomerInfoMobile } from "../controllers/customerController.mjs";
+import { createCustomer, deleteCustomer, getCustomerById, getCustomersByCompany, getCustomersByStaff, udpateCustomerInfoMobile, updateCustomer } from "../controllers/customerController.mjs";
 import { requirePermission } from "../middlewares/staffPermissions.mjs";
 import { verifyCompanyToken } from "../middlewares/verifyCompany.mjs";
 
@@ -12,5 +12,6 @@ customerRouter.get('/company/:companyId', getCustomersByCompany);
 customerRouter.delete('/delete', deleteCustomer);
 customerRouter.put('/update-mobile', udpateCustomerInfoMobile); 
 customerRouter.get('/:customerId', getCustomerById);
+customerRouter.put('/customer', updateCustomer);
 
 

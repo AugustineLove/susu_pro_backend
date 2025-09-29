@@ -63,6 +63,26 @@ export const recordEntry = async (req, res) => {
         [company_id, description, parseFloat(amount), date, category]
       );
       result = rows[0];
+    } 
+    else if (type === "payment"){
+      const { description, amount, date, category, payment_date, status, recorded_by, source } = req. body;
+
+      if (!description || !amount || !date || !category){
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          status: "fail",
+          message: "Missing required payment fields"
+        });
+      }
+
+      const { rows } = await client.query(
+        `INSERT INTO revenue (company_id, description, amount, payment_date, category, recorded_by,source)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *;
+        `,
+        [company_id, description, amount, date, category, recorded_by, source]
+      );
+      result = rows[0];
     }
 
     else {
@@ -100,12 +120,19 @@ export const getCompanyFinancials = async (req, res) => {
   console.log("Fetching financials for company ID:", companyId);
 
   try {
-    const [expensesRes, assetsRes, budgetsRes, commissionsRes] = await Promise.all([
+    const [expensesRes, paymentsRes, assetsRes, budgetsRes, commissionsRes] = await Promise.all([
       pool.query(
         `SELECT id, description, amount, category, expense_date, created_at
          FROM expenses
          WHERE company_id = $1
          ORDER BY expense_date DESC`,
+        [companyId]
+      ),
+      pool.query(
+        `SELECT id, description, amount, category, payment_date, created_at, source
+         FROM revenue
+         WHERE company_id = $1
+         ORDER BY payment_date DESC`,
         [companyId]
       ),
       pool.query(
@@ -134,6 +161,7 @@ export const getCompanyFinancials = async (req, res) => {
       status: "success",
       data: {
         expenses: expensesRes.rows,
+        revenue: paymentsRes.rows,
         assets: assetsRes.rows,
         budgets: budgetsRes.rows,
         totalCommission: parseFloat(commissionsRes.rows[0].total_commission),

@@ -70,6 +70,7 @@ export const loginUser = async (req, res) => {
           login_notifications: company.login_notifications,
           has_paid: company.has_paid,
           signupDate: company.signup_date, 
+          permissions: company.permissions,
           type: 'company'
         },
       });
@@ -77,7 +78,7 @@ export const loginUser = async (req, res) => {
 
     // 2. If not company, check staff
     ({ rows } = await pool.query(
-      `SELECT s.*, c.company_name, c.company_email AS parent_email 
+      `SELECT s.*, c.company_name, c.company_email AS parent_email, c.company_phone AS parent_phone 
        FROM staff s 
        JOIN companies c ON s.company_id = c.id 
        WHERE s.email = $1`,
@@ -123,15 +124,17 @@ export const loginUser = async (req, res) => {
         id: staff.id,
         staffName: staff.full_name,
         email: staff.email,
-        phone: staff.staff_phone,
+        phone: staff.phone,
         role: staff.role,
         companyId: staff.company_id,
         companyName: staff.company_name,
         parentCompanyEmail: staff.parent_email,
+        parentPhone: staff.parent_phone,
         two_factor_enabled: staff.two_factor_enabled,
         login_notifications: staff.login_notifications,
         has_paid: true,
         signupDate: staff.created_at, 
+        permissions: staff.permissions,
         type: 'staff', 
       },
     });
