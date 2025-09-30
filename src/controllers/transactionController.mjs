@@ -489,7 +489,7 @@ export const deleteTransaction = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error deleting transaction:', error.message);
+    console.error('Error deleting transaction:', error);
     return res.status(500).json({
       status: 'error',
       message: 'Internal server error',

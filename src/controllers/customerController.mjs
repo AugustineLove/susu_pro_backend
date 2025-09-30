@@ -109,7 +109,7 @@ export const deleteCustomer = async (req, res) => {
     // Soft delete customer + related accounts + transactions
     const now = new Date();
     await pool.query(
-      'UPDATE transactions SET is_deleted = true, deleted_at = $1 WHERE customer_id = $2',
+      'UPDATE transactions SET is_deleted = true, deleted_at = $1 WHERE created_by = $2',
       [now, customer_id]
     );
     await pool.query(
