@@ -10,7 +10,7 @@ export const createAccount = async (req, res) => {
     frequency, 
     minimum_balance, 
     interest_rate, 
-    initial_deposit,
+    initial_deposit = 0,
     created_by_type
   } = req.body;
 
@@ -22,7 +22,8 @@ export const createAccount = async (req, res) => {
   }
 
   try {
-    // Required fields
+   
+    console.log(initial_deposit);
     const fields = ["customer_id", "account_type", "created_by", "company_id", "created_by_type", "balance"];
     const values = [customer_id, account_type, created_by, company_id, created_by_type, initial_deposit];
     const placeholders = values.map((_, i) => `$${i + 1}`);
