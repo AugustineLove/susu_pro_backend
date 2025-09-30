@@ -1,9 +1,9 @@
 import pool from "../db.mjs";
 
 export const stakeMoney = async (req, res) => {
-  const { account_id, amount, staked_by, company_id, transaction_type, description, unique_code } = req.body;
+  const { account_id, amount, staked_by, company_id, transaction_date, transaction_type, description, unique_code } = req.body;
 
-
+  console.log(transaction_date);
   if (!account_id || !amount || !staked_by || !company_id || !transaction_type) {
     return res.status(400).json({
       status: "fail",
@@ -81,10 +81,10 @@ export const stakeMoney = async (req, res) => {
 
     // 3. Record the transaction with a status
     const transactionResult = await client.query(
-      `INSERT INTO transactions (account_id, amount, type, status, created_by, company_id, description, unique_code)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO transactions (account_id, amount, type, status, created_by, company_id, description, unique_code, transaction_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id, account_id, amount, type, status`,
-      [account_id, numericAmount, transaction_type, status, staked_by, company_id, description, unique_code]
+      [account_id, numericAmount, transaction_type, status, staked_by, company_id, description, unique_code, transaction_date]
     );
 
     // 4. Fetch updated balance
