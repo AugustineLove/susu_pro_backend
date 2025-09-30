@@ -422,3 +422,79 @@ export const rejectTransaction = async (req, res) => {
   }
 };
 
+
+export const deleteTransaction = async (req, res) => {
+  const { id } = req.params;
+  const { company_id } = req.body; 
+  console.log(id);
+  if (!id) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'Transaction ID is required',
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const txResult = await client.query(
+      `SELECT * FROM transactions 
+       WHERE id = $1 AND company_id = $2`,
+      [id, company_id]
+    );
+
+    if (txResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Transaction not found or not authorized',
+      });
+    }
+
+    const transaction = txResult.rows[0];
+
+    // 2. Update the account balance
+    if (transaction.account_id) {
+      let adjustment = 0;
+
+      if (transaction.type === 'deposit') {
+        adjustment = -Number(transaction.amount); // remove deposit
+      } else if (transaction.type === 'withdrawal' || transaction.type === 'expense') {
+        adjustment = Number(transaction.amount); // add back withdrawal/expense
+      }
+
+      await client.query(
+        `UPDATE accounts
+         SET balance = balance + $1
+         WHERE id = $2 AND company_id = $3`,
+        [adjustment, transaction.account_id, company_id]
+      );
+    }
+
+    // 3. Delete the transaction
+    await client.query(
+      `DELETE FROM transactions 
+       WHERE id = $1 AND company_id = $2`,
+      [id, company_id]
+    );
+
+    await client.query('COMMIT');
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Transaction deleted and account balance updated',
+      data: transaction,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting transaction:', error.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  } finally {
+    client.release();
+  }
+};
