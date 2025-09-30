@@ -322,10 +322,11 @@ export const udpateCustomerInfoMobile = async (req, res) => {
     daily_rate,
     location,
     gender,
-    date_of_birth
+    date_of_birth,
+    id_card
   } = req.body;
 
-  console.log(id, name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth);
+  console.log(id, name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth, id_card);
 
   try {
     const result = await pool.query(
@@ -338,11 +339,12 @@ export const udpateCustomerInfoMobile = async (req, res) => {
         daily_rate = $4,
         location = $5,
         gender = $6,
-        date_of_birth = $7
-      WHERE id = $8
+        date_of_birth = $7,
+        id_card = $8
+      WHERE id = $9
       RETURNING *;
       `,
-      [name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth, id]
+      [name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth, id_card, id]
     );
 
     if (result.rows.length === 0) {
