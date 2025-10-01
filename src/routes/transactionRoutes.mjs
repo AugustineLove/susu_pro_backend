@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { stakeMoney } from "../controllers/stakeController.mjs";
+import { deductCommission, stakeMoney } from "../controllers/stakeController.mjs";
 import { approveTransaction, deleteTransaction, getCompanyTransactions, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction } from "../controllers/transactionController.mjs";
 
 
@@ -14,3 +14,4 @@ transactionRouter.get('/all/:company_id', getRecentTransactions);
 transactionRouter.post('/:id/approve', approveTransaction);
 transactionRouter.post('/:id/reject', rejectTransaction);
 transactionRouter.delete('/:id', deleteTransaction);
+transactionRouter.post('/commission/:accountId', deductCommission);

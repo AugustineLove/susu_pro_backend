@@ -168,6 +168,8 @@ export const getRecentTransactions = async (req, res) => {
         c.name AS customer_name,
         c.phone_number AS customer_phone,
         s.full_name as staff_name,
+        a.customer_id as customer_id,
+        t.account_id as account_id,
         s.id as staff_id
       FROM 
         transactions t
@@ -249,8 +251,9 @@ export const approveTransaction = async (req, res) => {
     // const pageLimit = 30 * dailyRate; // customer portion per page
     // const pages = Math.ceil(amount / pageLimit);
     // const commission = pages * dailyRate;
-    const commission = amount / 31;
-    const totalDeduction = amount + commission;
+    // const commission = amount / 31;
+    // const totalDeduction = amount + commission;
+    const totalDeduction = amount;
 
     if (totalDeduction > account.balance) {
       await client.query("ROLLBACK");
