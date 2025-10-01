@@ -259,7 +259,7 @@ export const approveTransaction = async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(400).json({
         status: "fail",
-        message: "Insufficient balance (including commission)",
+        message: "Insufficient balance",
       });
     }
 
@@ -268,15 +268,15 @@ export const approveTransaction = async (req, res) => {
   [totalDeduction, account.id]
 );
 
-// 6. Record commission
-await client.query(
-  `INSERT INTO commissions (transaction_id, account_id, customer_id, company_id, amount)
-   VALUES ($1, $2, 
-     (SELECT customer_id FROM accounts WHERE id = $2), 
-     (SELECT company_id FROM accounts WHERE id = $2), 
-     $3)`,
-  [transaction.id, account.id, commission]
-);
+// // 6. Record commission
+// await client.query(
+//   `INSERT INTO commissions (transaction_id, account_id, customer_id, company_id, amount)
+//    VALUES ($1, $2, 
+//      (SELECT customer_id FROM accounts WHERE id = $2), 
+//      (SELECT company_id FROM accounts WHERE id = $2), 
+//      $3)`,
+//   [transaction.id, account.id, commission]
+// );
 
 // 7. Update transaction
 await client.query(
@@ -349,7 +349,7 @@ if (remaining > 0) {
       message: "Withdrawal approved and processed",
       data: {
         received: amount,
-        commission,
+        // commission,
         deducted: totalDeduction,
         newBalance: parseFloat(account.balance) - totalDeduction,
       },
