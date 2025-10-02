@@ -167,6 +167,15 @@ export const deductCommission = async (req, res) => {
       [amount, accountId, company_id]
     );
 
+    await client.query(
+    `INSERT INTO commissions (account_id, customer_id, company_id, amount)
+    VALUES ( $1, 
+      (SELECT customer_id FROM accounts WHERE id = $1), 
+      (SELECT company_id FROM accounts WHERE id = $1), 
+      $2)`,
+    [ accountId, amount]
+  );
+
 
     const txRes = await client.query(
       `INSERT INTO transactions 
