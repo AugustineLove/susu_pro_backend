@@ -150,9 +150,12 @@ export const getCompanyFinancials = async (req, res) => {
         [companyId]
       ),
       pool.query(
-        `SELECT COALESCE(SUM(amount), 0) AS total_commission
-         FROM commissions
-         WHERE company_id = $1`,
+        `SELECT DATE(created_at) AS date, COALESCE(SUM(amount), 0) AS total_commission
+          FROM commissions
+          WHERE company_id = $1
+          GROUP BY DATE(created_at)
+          ORDER BY DATE(created_at);
+          `,
         [companyId]
       ),
     ]);

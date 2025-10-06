@@ -78,7 +78,12 @@ export const getCompanyStats = async (req, res) => {
     console.log('Fetching stats for company ID:', companyId);
 const customerQuery = 'SELECT COUNT(*) FROM customers WHERE company_id = $1';
 const transactionQuery = 'SELECT COUNT(*) FROM transactions WHERE company_id = $1';
-const balanceQuery = 'SELECT COALESCE(SUM(balance), 0) AS total_balance FROM accounts WHERE company_id = $1';
+const balanceQuery = `SELECT COALESCE(SUM(balance), 0) AS total_balance
+FROM accounts
+WHERE company_id = $1
+  AND account_type IN ('savings', 'susu', 'Susu', 'Savings')
+  AND is_deleted = false;
+`;
 const commissionQuery = 'SELECT COALESCE(SUM(amount), 0) AS total_commissions FROM commissions WHERE company_id = $1';
 
 const [

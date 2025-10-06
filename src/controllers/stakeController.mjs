@@ -1,9 +1,17 @@
 import pool from "../db.mjs";
 
 export const stakeMoney = async (req, res) => {
-  const { account_id, amount, staked_by, company_id, transaction_type, description, unique_code } = req.body;
+  const {
+    account_id,
+    amount,
+    staked_by,
+    company_id,
+    transaction_type,
+    description,
+    unique_code,
+    transaction_date, // optional
+  } = req.body;
 
-  console.log()
   if (!account_id || !amount || !staked_by || !company_id || !transaction_type) {
     return res.status(400).json({
       status: "fail",
@@ -24,9 +32,9 @@ export const stakeMoney = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Fetch account details
+    // Fetch account details (include type for logic)
     const accRes = await client.query(
-      `SELECT id, balance FROM accounts WHERE id = $1`,
+      `SELECT id, balance, account_type FROM accounts WHERE id = $1`,
       [account_id]
     );
 
@@ -49,7 +57,7 @@ export const stakeMoney = async (req, res) => {
       });
     }
 
-    // For withdrawals: check balance but don't deduct yet
+    // Check balance for withdrawal
     if (transaction_type === "withdrawal" && numericAmount > account.balance) {
       await client.query("ROLLBACK");
       return res.status(400).json({
@@ -58,35 +66,79 @@ export const stakeMoney = async (req, res) => {
       });
     }
 
-    // 1. Record the stake (optional depending on your use case)
+    // 1️⃣ Record the stake
     await client.query(
       `INSERT INTO stakes (account_id, amount, staked_by)
        VALUES ($1, $2, $3)`,
       [account_id, numericAmount, staked_by]
     );
 
-    let status = "completed"; 
+    let status = "completed";
+    const accountTypeLower = account.account_type.toLowerCase();
 
-    // 2. Only update balance for deposits
+    // 2️⃣ Update balance logic
     if (transaction_type === "deposit") {
-      const balanceChange = numericAmount;
-      await client.query(
-        `UPDATE accounts SET balance = balance + $1 WHERE id = $2`,
-        [balanceChange, account_id]
-      );
-    } else {
+      // If account is a loan account, deduct instead
+      if (accountTypeLower.includes("loan")) {
+        await client.query(
+          `UPDATE accounts SET balance = balance - $1 WHERE id = $2`,
+          [numericAmount, account_id]
+        );
+      } else {
+        await client.query(
+          `UPDATE accounts SET balance = balance + $1 WHERE id = $2`,
+          [numericAmount, account_id]
+        );
+      }
+    } else if (transaction_type === "withdrawal") {
+      // Withdrawals are always pending
       status = "pending";
     }
 
-    // 3. Record the transaction with a status
+    // 3️⃣ Record the transaction (conditionally include date)
+    const insertTransactionQuery = transaction_date
+      ? `
+        INSERT INTO transactions (
+          account_id, amount, type, status, created_by, company_id, description, unique_code, transaction_date
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, account_id, amount, type, status, transaction_date
+      `
+      : `
+        INSERT INTO transactions (
+          account_id, amount, type, status, created_by, company_id, description, unique_code
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id, account_id, amount, type, status, transaction_date
+      `;
+
+    const transactionParams = transaction_date
+      ? [
+          account_id,
+          numericAmount,
+          transaction_type,
+          status,
+          staked_by,
+          company_id,
+          description,
+          unique_code,
+          transaction_date,
+        ]
+      : [
+          account_id,
+          numericAmount,
+          transaction_type,
+          status,
+          staked_by,
+          company_id,
+          description,
+          unique_code,
+        ];
+
     const transactionResult = await client.query(
-      `INSERT INTO transactions (account_id, amount, type, status, created_by, company_id, description, unique_code)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, account_id, amount, type, status`,
-      [account_id, numericAmount, transaction_type, status, staked_by, company_id, description, unique_code]
+      insertTransactionQuery,
+      transactionParams
     );
 
-    // 4. Fetch updated balance
+    // 4️⃣ Fetch updated account balance
     const updatedAccountRes = await client.query(
       `SELECT id, account_type, balance FROM accounts WHERE id = $1`,
       [account_id]
