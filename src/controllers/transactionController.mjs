@@ -167,6 +167,7 @@ export const getRecentTransactions = async (req, res) => {
         a.id,
         c.name AS customer_name,
         c.phone_number AS customer_phone,
+        c.account_number AS customer_account_number,
         s.full_name as staff_name,
         a.customer_id as customer_id,
         t.account_id as account_id,

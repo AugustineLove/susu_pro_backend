@@ -7,7 +7,8 @@ export const defaultPermissions = {
     MANAGE_STAFF: true,
     SETTINGS_ACCESS: true,
     DELETE_CUSTOMER: true,
-    ALTER_ACCOUNT: true
+    ALTER_ACCOUNT: true,
+    ALTER_FINANCE: true
   },
   manager: {
     CUSTOMER_CREATE: true,
@@ -17,7 +18,8 @@ export const defaultPermissions = {
     MANAGE_STAFF: false,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: true,
-    ALTER_ACCOUNT: true
+    ALTER_ACCOUNT: true,
+    ALTER_FINANCE: true
   },
   loan_officer: {
     CUSTOMER_CREATE: false,

@@ -188,112 +188,115 @@ export const getCustomersByCompany = async (req, res) => {
   try {
     const result = await pool.query({
       text: `
+  SELECT
+    c.id AS customer_id,
+    c.name,
+    c.phone_number,
+    c.account_number,
+    c.email,
+    c.location,
+    c.daily_rate,
+    c.next_of_kin,
+    c.id_card,
+    c.city,
+    c.registered_by,
+    c.date_of_birth,
+    c.gender,
+    c.date_of_registration,
+    s.full_name AS registered_by_name,
+
+    -- Customer Summary across all NON-LOAN accounts
+    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0) AS total_balance_across_all_accounts,
+    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN total_deposits_customer.sum_deposits ELSE 0 END), 0) AS total_deposits_across_all_accounts,
+    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN total_withdrawals_customer.sum_withdrawals ELSE 0 END), 0) AS total_withdrawals_across_all_accounts,
+    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN total_stakes_customer.sum_stakes ELSE 0 END), 0) AS total_stakes_across_all_accounts,
+
+    -- Nested accounts (includes all types, but you can filter on frontend if needed)
+    COALESCE(
+      JSON_AGG(
+        JSON_BUILD_OBJECT(
+          'account_id', a.id,
+          'account_type', a.account_type,
+          'balance', a.balance,
+          'created_at', a.created_at,
+          'total_stakes', COALESCE(stake_summary.total_stakes, 0),
+          'total_deposits', COALESCE(dep_with.total_deposits, 0),
+          'total_withdrawals', COALESCE(dep_with.total_withdrawals, 0)
+        )
+        ORDER BY a.created_at
+      ) FILTER (WHERE a.id IS NOT NULL),
+      '[]'
+    ) AS accounts
+
+  FROM customers c
+  JOIN staff s ON c.registered_by = s.id
+  LEFT JOIN accounts a ON c.id = a.customer_id
+
+  -- Subquery for total stakes per account
+  LEFT JOIN (
+    SELECT account_id, COUNT(id) AS total_stakes
+    FROM stakes
+    GROUP BY account_id
+  ) stake_summary ON a.id = stake_summary.account_id
+
+  -- Subquery for total deposits/withdrawals per account
+  LEFT JOIN (
+    SELECT
+      account_id,
+      SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END) AS total_deposits,
+      SUM(CASE WHEN type = 'withdrawal' THEN amount ELSE 0 END) AS total_withdrawals
+    FROM transactions
+    GROUP BY account_id
+  ) dep_with ON a.id = dep_with.account_id
+
+  -- Total deposits across all accounts (exclude loans)
+  LEFT JOIN (
+    SELECT
+        a_inner.customer_id,
+        SUM(CASE WHEN t_inner.type = 'deposit' THEN t_inner.amount ELSE 0 END) AS sum_deposits
+    FROM accounts a_inner
+    JOIN transactions t_inner ON a_inner.id = t_inner.account_id
+    WHERE a_inner.account_type NOT ILIKE '%loan%'
+    GROUP BY a_inner.customer_id
+  ) AS total_deposits_customer ON c.id = total_deposits_customer.customer_id
+
+  -- Total withdrawals across all accounts (exclude loans)
+  LEFT JOIN (
       SELECT
-        c.id AS customer_id,
-        c.name,
-        c.phone_number,
-        c.account_number,
-        c.email,
-        c.location,
-        c.daily_rate,
-        c.next_of_kin,
-        c.id_card,
-        c.city,
-        c.registered_by,
-        c.date_of_birth,
-        c.gender,
-        c.date_of_registration,
-        s.full_name AS registered_by_name,
+          a_inner.customer_id,
+          SUM(CASE WHEN t_inner.type = 'withdrawal' THEN t_inner.amount ELSE 0 END) AS sum_withdrawals
+      FROM accounts a_inner
+      JOIN transactions t_inner ON a_inner.id = t_inner.account_id
+      WHERE a_inner.account_type NOT ILIKE '%loan%'
+      GROUP BY a_inner.customer_id
+  ) AS total_withdrawals_customer ON c.id = total_withdrawals_customer.customer_id
 
-        -- Customer Summary across all accounts
-        COALESCE(SUM(a.balance), 0) AS total_balance_across_all_accounts,
-        COALESCE(SUM(total_deposits_customer.sum_deposits), 0) AS total_deposits_across_all_accounts,
-        COALESCE(SUM(total_withdrawals_customer.sum_withdrawals), 0) AS total_withdrawals_across_all_accounts,
-        COALESCE(SUM(total_stakes_customer.sum_stakes), 0) AS total_stakes_across_all_accounts,
+  -- Total stakes across all accounts (exclude loans)
+  LEFT JOIN (
+      SELECT
+          a_inner.customer_id,
+          COUNT(s_inner.id) AS sum_stakes
+      FROM accounts a_inner
+      JOIN stakes s_inner ON a_inner.id = s_inner.account_id
+      WHERE a_inner.account_type NOT ILIKE '%loan%'
+      GROUP BY a_inner.customer_id
+  ) AS total_stakes_customer ON c.id = total_stakes_customer.customer_id
 
-
-        -- Nested accounts
-        COALESCE(
-          JSON_AGG(
-            JSON_BUILD_OBJECT(
-              'account_id', a.id,
-              'account_type', a.account_type,
-              'balance', a.balance,
-              'created_at', a.created_at,
-              'total_stakes', COALESCE(stake_summary.total_stakes, 0),
-              'total_deposits', COALESCE(dep_with.total_deposits, 0),
-              'total_withdrawals', COALESCE(dep_with.total_withdrawals, 0)
-            ) ORDER BY a.created_at -- Optional: Order accounts within the array
-          ) FILTER (WHERE a.id IS NOT NULL), -- Only include accounts if they exist
-          '[]'
-        ) AS accounts
-
-      FROM customers c 
-      JOIN staff s ON c.registered_by = s.id
-      LEFT JOIN accounts a ON c.id = a.customer_id
-
-      -- Subquery for total stakes per account
-      LEFT JOIN (
-        SELECT account_id, COUNT(id) AS total_stakes
-        FROM stakes
-        GROUP BY account_id
-      ) stake_summary ON a.id = stake_summary.account_id
-
-      -- Subquery for total deposits/withdrawals per account
-      LEFT JOIN (
-        SELECT
-          account_id,
-          SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END) AS total_deposits,
-          SUM(CASE WHEN type = 'withdrawal' THEN amount ELSE 0 END) AS total_withdrawals
-        FROM transactions
-        GROUP BY account_id
-      ) dep_with ON a.id = dep_with.account_id
-
-      -- Subquery for total deposits across all accounts for a customer
-      LEFT JOIN (
-        SELECT
-            a_inner.customer_id,
-            SUM(CASE WHEN t_inner.type = 'deposit' THEN t_inner.amount ELSE 0 END) AS sum_deposits
-        FROM accounts a_inner
-        JOIN transactions t_inner ON a_inner.id = t_inner.account_id
-        GROUP BY a_inner.customer_id
-      ) AS total_deposits_customer ON c.id = total_deposits_customer.customer_id
-
-      -- Subquery for total withdrawals across all accounts for a customer
-      LEFT JOIN (
-          SELECT
-              a_inner.customer_id,
-              SUM(CASE WHEN t_inner.type = 'withdrawal' THEN t_inner.amount ELSE 0 END) AS sum_withdrawals
-          FROM accounts a_inner
-          JOIN transactions t_inner ON a_inner.id = t_inner.account_id
-          GROUP BY a_inner.customer_id
-      ) AS total_withdrawals_customer ON c.id = total_withdrawals_customer.customer_id
-
-      -- Subquery for total stakes across all accounts for a customer
-      LEFT JOIN (
-          SELECT
-              a_inner.customer_id,
-              COUNT(s_inner.id) AS sum_stakes
-          FROM accounts a_inner
-          JOIN stakes s_inner ON a_inner.id = s_inner.account_id
-          GROUP BY a_inner.customer_id
-      ) AS total_stakes_customer ON c.id = total_stakes_customer.customer_id
-
-
-      WHERE c.company_id = $1  AND c.is_deleted = false
-      GROUP BY
-        c.id,
-        c.name,
-        c.phone_number,
-        c.email,
-        c.location,
-        c.date_of_registration,
-        s.full_name,
-        total_deposits_customer.sum_deposits, -- Include in GROUP BY for correct aggregation
-        total_withdrawals_customer.sum_withdrawals, -- Include in GROUP BY for correct aggregation
-        total_stakes_customer.sum_stakes -- Include in GROUP BY for correct aggregation
-      ORDER BY c.name;
-      `, 
+  WHERE c.company_id = $1 AND c.is_deleted = false
+  GROUP BY
+    c.id,
+    c.name,
+    c.phone_number,
+    c.email,
+    c.location,
+    c.date_of_registration,
+    s.full_name,
+    total_deposits_customer.sum_deposits,
+    total_withdrawals_customer.sum_withdrawals,
+    total_stakes_customer.sum_stakes
+  ORDER BY c.name;
+`
+,
       values: [companyId],
       statement_timeout: 120000
     });
