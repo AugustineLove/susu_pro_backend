@@ -2,112 +2,226 @@ import pool from "../db.mjs";
 
 
 export const recordEntry = async (req, res) => {
-  const { type, company_id } = req.body;
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
+
+    const { type, company_id } = req.body;
     let result;
 
-    console.log("Recording entry:", req.body);
-
+    /* =====================================================
+     * ASSET
+     * =================================================== */
     if (type === "asset") {
-      const { name, value, date, category, usefulLife, depreciation_rate } = req.body;
+      const {
+        name,
+        value,
+        date,
+        category,
+        usefulLife,
+        depreciation_rate,
+      } = req.body;
 
       if (!name || !value || !date || !category) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          status: "fail",
-          message: "Missing required asset fields"
-        });
+        throw new Error("Missing required asset fields");
       }
 
-      let insertQuery;
-      let params;
-
-      if (depreciation_rate) {
-        insertQuery = `
-          INSERT INTO assets (company_id, name, value, purchase_date, category, depreciation_rate, useful_life)
+      const query = depreciation_rate
+        ? `
+          INSERT INTO assets (
+            company_id, name, value, purchase_date, category,
+            depreciation_rate, useful_life
+          )
           VALUES ($1, $2, $3, $4, $5, $6, $7)
           RETURNING *;
-        `;
-        params = [company_id, name, parseFloat(value), date, category, parseFloat(depreciation_rate), usefulLife || null];
-      } else {
-        insertQuery = `
-          INSERT INTO assets (company_id, name, value, purchase_date, category, useful_life)
+        `
+        : `
+          INSERT INTO assets (
+            company_id, name, value, purchase_date, category, useful_life
+          )
           VALUES ($1, $2, $3, $4, $5, $6)
           RETURNING *;
         `;
-        params = [company_id, name, parseFloat(value), date, category, usefulLife || null];
-      }
 
-      const { rows } = await client.query(insertQuery, params);
-      result = rows[0];
-    } 
-    
-    else if (type === "expense") {
-      const { description, amount, date, category, status } = req.body;
+      const params = depreciation_rate
+        ? [
+            company_id,
+            name,
+            parseFloat(value),
+            date,
+            category,
+            parseFloat(depreciation_rate),
+            usefulLife || null,
+          ]
+        : [
+            company_id,
+            name,
+            parseFloat(value),
+            date,
+            category,
+            usefulLife || null,
+          ];
 
-      if (!description || !amount || !date || !category) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          status: "fail",
-          message: "Missing required expense fields"
-        });
-      }
-
-      const { rows } = await client.query(
-        `INSERT INTO expenses (company_id, description, amount, expense_date, category)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *;`,
-        [company_id, description, parseFloat(amount), date, category]
-      );
-      result = rows[0];
-    } 
-    else if (type === "payment"){
-      const { description, amount, date, category, payment_date, status, recorded_by, source } = req. body;
-
-      if (!description || !amount || !date || !category){
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          status: "fail",
-          message: "Missing required payment fields"
-        });
-      }
-
-      const { rows } = await client.query(
-        `INSERT INTO revenue (company_id, description, amount, payment_date, category, recorded_by,source)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *;
-        `,
-        [company_id, description, amount, date, category, recorded_by, source]
-      );
+      const { rows } = await client.query(query, params);
       result = rows[0];
     }
 
+    /* =====================================================
+     * EXPENSE — DEDUCT FROM TODAY'S FLOAT
+     * =================================================== */
+    else if (type === "expense") {
+      const { description, amount, date, category, recorded_by } = req.body;
+
+      if (!description || !amount || !date || !category) {
+        throw new Error("Missing required expense fields");
+      }
+
+      const expenseAmount = parseFloat(amount);
+
+      // 1. Record expense
+      const expenseRes = await client.query(
+        `
+        INSERT INTO expenses (
+          company_id, description, amount, expense_date, category, recorded_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *;
+        `,
+        [company_id, description, expenseAmount, date, category, recorded_by || null]
+      );
+
+      result = expenseRes.rows[0];
+
+      // 2. Deduct from today's budget (float)
+      const today = new Date().toISOString().split("T")[0];
+
+      const budgetRes = await client.query(
+        `
+        SELECT id, allocated, spent
+        FROM budgets
+        WHERE company_id = $1
+        AND date = $2
+        ORDER BY id ASC;
+        `,
+        [company_id, today]
+      );
+
+      let remaining = expenseAmount;
+
+      if (budgetRes.rowCount > 0) {
+        for (const budget of budgetRes.rows) {
+          const available = budget.allocated - budget.spent;
+
+          if (remaining <= 0) break;
+
+          if (available > 0) {
+            if (remaining <= available) {
+              await client.query(
+                `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
+                [remaining, budget.id]
+              );
+              remaining = 0;
+            } else {
+              await client.query(
+                `UPDATE budgets SET spent = allocated WHERE id = $1`,
+                [budget.id]
+              );
+              remaining -= available;
+            }
+            await client.query(
+            `
+            INSERT INTO float_movements (
+              budget_id, company_id, source_type, source_id, amount, direction
+            )
+            VALUES ($1, $2, 'expense', $3, $4, 'debit')
+            `,
+            [budget.id, company_id, result.id, amount]
+          );
+          console.log("Recorded float movement for expense:", result.id);
+          }
+        }
+
+        // 🚨 Push negative if still remaining
+        if (remaining > 0) {
+          await client.query(
+            `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
+            [remaining, budgetRes.rows[0].id]
+          );
+        }
+      } else {
+        // 🚨 No budget today → create negative float
+        await client.query(
+          `
+          INSERT INTO budgets (company_id, date, allocated, spent)
+          VALUES ($1, $2, 0, $3);
+          `,
+          [company_id, today, expenseAmount]
+        );
+      }
+
+    }
+
+    /* =====================================================
+     * PAYMENT / REVENUE
+     * =================================================== */
+    else if (type === "payment") {
+      const {
+        description,
+        amount,
+        date,
+        category,
+        recorded_by,
+        source,
+      } = req.body;
+
+      if (!description || !amount || !date || !category) {
+        throw new Error("Missing required payment fields");
+      }
+
+      const { rows } = await client.query(
+        `
+        INSERT INTO revenue (
+          company_id, description, amount, payment_date,
+          category, recorded_by, source
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *;
+        `,
+        [
+          company_id,
+          description,
+          parseFloat(amount),
+          date,
+          category,
+          recorded_by || null,
+          source || null,
+        ]
+      );
+
+      result = rows[0];
+    }
+
+    /* =====================================================
+     * INVALID TYPE
+     * =================================================== */
     else {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        status: "fail",
-        message: "Invalid type. Must be 'asset' or 'expense'."
-      });
+      throw new Error("Invalid type. Must be asset, expense, or payment");
     }
 
     await client.query("COMMIT");
 
     return res.status(201).json({
       status: "success",
-      data: result
+      data: result,
     });
-
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Error recording entry:", error.message);
 
-    return res.status(500).json({
+    return res.status(400).json({
       status: "error",
-      message: "Internal server error",
-      error: error.message
+      message: error.message,
     });
   } finally {
     client.release();
@@ -182,32 +296,78 @@ export const getCompanyFinancials = async (req, res) => {
 
 
 export const addBudget = async (req, res) => {
-  const { company_id, allocated, date } = req.body;
+  const { company_id, allocated, source, recorded_by } = req.body;
+  console.log("Adding budget:", req.body);
+  if (!company_id || !allocated) {
+    return res.status(400).json({
+      status: "fail",
+      message: "company_id and allocated are required",
+    });
+  }
+
+  const client = await pool.connect();
+  const today = new Date().toISOString().split("T")[0];
 
   try {
-    const insertQuery = `
-      INSERT INTO budgets (company_id, allocated, date)
-      VALUES ($1, $2, $3)
-      RETURNING *;
-    `;
+    await client.query("BEGIN");
 
-    const { rows } = await pool.query(insertQuery, [
-      company_id,
-      allocated,
-      date || new Date().toISOString().split("T")[0]
-    ]);
+    // 1️⃣ Get or create today's budget
+    const budgetRes = await client.query(
+      `SELECT * FROM budgets
+       WHERE company_id = $1 AND date = $2`,
+      [company_id, today]
+    );
+
+    let budget;
+
+    if (budgetRes.rowCount === 0) {
+      const insertRes = await client.query(
+        `INSERT INTO budgets (company_id, date, allocated, spent)
+         VALUES ($1, $2, $3, 0)
+         RETURNING *`,
+        [company_id, today, allocated]
+      );
+
+      budget = insertRes.rows[0];
+    } else {
+      const updateRes = await client.query(
+        `UPDATE budgets
+         SET allocated = allocated + $1
+         WHERE id = $2
+         RETURNING *`,
+        [allocated, budgetRes.rows[0].id]
+      );
+
+      budget = updateRes.rows[0];
+    }
+
+    // 2️⃣ Record the top-up history
+    await client.query(
+      `INSERT INTO budget_topups (budget_id, amount, source, recorded_by)
+       VALUES ($1, $2, $3, $4)`,
+      [budget.id, allocated, source || "manual", recorded_by || null]
+    );
+
+    await client.query("COMMIT");
 
     return res.status(201).json({
       status: "success",
-      data: rows[0]
+      data: {
+        budget,
+        available: budget.allocated - budget.spent,
+      },
     });
 
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error("Error adding budget:", error.message);
+
     return res.status(500).json({
       status: "error",
       message: "Internal server error",
-      error: error.message
+      error: error.message,
     });
+  } finally {
+    client.release();
   }
 };

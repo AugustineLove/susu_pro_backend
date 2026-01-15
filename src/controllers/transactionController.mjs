@@ -157,33 +157,52 @@ export const getRecentTransactions = async (req, res) => {
 
     const result = await pool.query({ text: `
       SELECT 
-        t.id AS transaction_id,
-        t.amount,
-        t.type,
-        t.description,
-        t.status,
-        t.unique_code,
-        t.transaction_date,
-        a.id,
-        c.name AS customer_name,
-        c.phone_number AS customer_phone,
-        c.account_number AS customer_account_number,
-        s.full_name as staff_name,
-        a.customer_id as customer_id,
-        t.account_id as account_id,
-        s.id as staff_id
-      FROM 
-        transactions t
-      JOIN
-        staff s ON t.created_by = s.id
-      JOIN 
-        accounts a ON t.account_id = a.id
-      JOIN 
-        customers c ON a.customer_id = c.id
-      WHERE 
-        t.company_id = $1 AND t.is_deleted = false
-      ORDER BY 
-        t.transaction_date DESC
+  t.id AS transaction_id,
+  t.amount,
+  t.type,
+  t.description,
+  t.status,
+  t.unique_code,
+  t.transaction_date,
+
+  a.id AS account_id,
+  a.customer_id,
+
+  c.name AS customer_name,
+  c.phone_number AS customer_phone,
+  c.account_number AS customer_account_number,
+
+  -- Mobile Banker (created_by)
+  mb.id AS mobile_banker_id,
+  mb.full_name AS mobile_banker_name,
+
+  -- Recording Staff (staff_id)
+  rs.id AS recorded_staff_id,
+  rs.full_name AS recorded_staff_name
+
+FROM transactions t
+
+-- Mobile banker who created it
+LEFT JOIN staff mb 
+  ON t.created_by = mb.id
+
+-- Staff who recorded / approved it
+LEFT JOIN staff rs 
+  ON t.staff_id = rs.id
+
+JOIN accounts a 
+  ON t.account_id = a.id
+
+JOIN customers c 
+  ON a.customer_id = c.id
+
+WHERE 
+  t.company_id = $1 
+  AND t.is_deleted = false
+
+ORDER BY 
+  t.transaction_date DESC;
+
     `, values: [company_id], statement_timeout: 120000});
 
     res.status(200).json({ status: 'success', data: result.rows });
@@ -201,167 +220,216 @@ export const approveTransaction = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Fetch transaction
+    /* =====================================================
+     * 1. Fetch transaction
+     * =================================================== */
     const txRes = await client.query(
-      `SELECT id, account_id, amount, type, status 
-       FROM transactions WHERE id = $1`,
+      `
+      SELECT id, account_id, amount, type, status, created_by
+      FROM transactions
+      WHERE id = $1
+      `,
       [transactionId]
     );
 
     if (txRes.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ status: "fail", message: "Transaction not found" });
+      throw new Error("Transaction not found");
     }
 
     const transaction = txRes.rows[0];
 
-    // 2. Ensure it's a pending withdrawal
     if (transaction.type !== "withdrawal" || transaction.status !== "pending") {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        status: "fail",
-        message: "Only pending withdrawals can be approved",
-      });
+      throw new Error("Only pending withdrawals can be approved");
     }
 
     const amount = parseFloat(transaction.amount);
 
-    // 3. Get account + customer (to fetch daily_rate)
+    /* =====================================================
+     * 2. Fetch account, customer & company
+     * =================================================== */
     const accRes = await client.query(
-      `SELECT a.id, a.balance, c.daily_rate
-       FROM accounts a
-       JOIN customers c ON c.id = a.customer_id
-       WHERE a.id = $1`,
+      `
+      SELECT 
+        a.id,
+        a.balance,
+        a.company_id,
+        c.id AS customer_id
+      FROM accounts a
+      JOIN customers c ON c.id = a.customer_id
+      WHERE a.id = $1
+      `,
       [transaction.account_id]
     );
 
     if (accRes.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ status: "fail", message: "Associated account not found" });
+      throw new Error("Associated account not found");
     }
 
     const account = accRes.rows[0];
-    const dailyRate = parseFloat(account.daily_rate);
 
-    if (!dailyRate || dailyRate <= 0) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ status: "fail", message: "Invalid daily rate for customer" });
+    if (amount > account.balance) {
+      throw new Error("Insufficient account balance");
     }
 
-    // 4. Calculate commission
-    // const pageLimit = 30 * dailyRate; // customer portion per page
-    // const pages = Math.ceil(amount / pageLimit);
-    // const commission = pages * dailyRate;
-    // const commission = amount / 31;
-    // const totalDeduction = amount + commission;
-    const totalDeduction = amount;
+    /* =====================================================
+     * 3. Deduct from account
+     * =================================================== */
+    await client.query(
+      `
+      UPDATE accounts
+      SET balance = balance - $1
+      WHERE id = $2
+      `,
+      [amount, account.id]
+    );
 
-    if (totalDeduction > account.balance) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        status: "fail",
-        message: "Insufficient balance",
-      });
+    /* =====================================================
+     * 4. Approve transaction
+     * =================================================== */
+    await client.query(
+      `
+      UPDATE transactions
+      SET status = 'approved'
+      WHERE id = $1
+      `,
+      [transaction.id]
+    );
+
+    /* =====================================================
+     * 5. Deduct from float (ALLOW NEGATIVE)
+     *    + record float_movements
+     * =================================================== */
+    const today = new Date().toISOString().split("T")[0];
+
+    const budgetRes = await client.query(
+      `
+      SELECT id, allocated, spent
+      FROM budgets
+      WHERE company_id = $1
+      AND date = $2
+      ORDER BY id ASC
+      `,
+      [account.company_id, today]
+    );
+
+    let remaining = amount;
+
+    if (budgetRes.rowCount > 0) {
+      for (const budget of budgetRes.rows) {
+        if (remaining <= 0) break;
+
+        const available = budget.allocated - budget.spent;
+        let deducted = 0;
+
+        if (available > 0) {
+          if (remaining <= available) {
+            deducted = remaining;
+            remaining = 0;
+
+            await client.query(
+              `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
+              [deducted, budget.id]
+            );
+          } else {
+            deducted = available;
+            remaining -= available;
+
+            await client.query(
+              `UPDATE budgets SET spent = allocated WHERE id = $1`,
+              [budget.id]
+            );
+          }
+
+          // 🔹 Record float movement
+          await client.query(
+            `
+            INSERT INTO float_movements (
+              budget_id,
+              company_id,
+              source_type,
+              source_id,
+              amount,
+              direction
+            )
+            VALUES ($1, $2, 'withdrawal', $3, $4, 'debit')
+            `,
+            [budget.id, account.company_id, transaction.id, deducted]
+          );
+        }
+      }
+
+      // 🚨 Push negative if still remaining
+      if (remaining > 0) {
+        const targetBudget = budgetRes.rows[0];
+
+        await client.query(
+          `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
+          [remaining, targetBudget.id]
+        );
+
+        await client.query(
+          `
+          INSERT INTO float_movements (
+            budget_id,
+            company_id,
+            source_type,
+            source_id,
+            amount,
+            direction
+          )
+          VALUES ($1, $2, 'withdrawal', $3, $4, 'debit')
+          `,
+          [targetBudget.id, account.company_id, transaction.id, remaining]
+        );
+      }
+    } else {
+      // 🚨 No float today → create NEGATIVE float
+      const { rows } = await client.query(
+        `
+        INSERT INTO budgets (company_id, date, allocated, spent)
+        VALUES ($1, $2, 0, $3)
+        RETURNING id
+        `,
+        [account.company_id, today, amount]
+      );
+
+      await client.query(
+        `
+        INSERT INTO float_movements (
+          budget_id,
+          company_id,
+          source_type,
+          source_id,
+          amount,
+          direction
+        )
+        VALUES ($1, $2, 'withdrawal', $3, $4, 'debit')
+        `,
+        [rows[0].id, account.company_id, transaction.id, amount]
+      );
     }
 
-    await client.query(
-  `UPDATE accounts SET balance = balance - $1 WHERE id = $2`,
-  [totalDeduction, account.id]
-);
-
-// // 6. Record commission
-// await client.query(
-//   `INSERT INTO commissions (transaction_id, account_id, customer_id, company_id, amount)
-//    VALUES ($1, $2, 
-//      (SELECT customer_id FROM accounts WHERE id = $2), 
-//      (SELECT company_id FROM accounts WHERE id = $2), 
-//      $3)`,
-//   [transaction.id, account.id, commission]
-// );
-
-// 7. Update transaction
-await client.query(
-  `UPDATE transactions 
-   SET status = 'approved'
-   WHERE id = $1`,
-  [transaction.id]
-);
-
-// 6. Deduct from today's budgets (float)
-const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-
-// Get all budgets for today
-const budgetRes = await client.query(
-  `SELECT id, allocated, spent
-   FROM budgets
-   WHERE company_id = (SELECT company_id FROM accounts WHERE id = $1)
-   AND date = $2
-   ORDER BY id ASC`, // order to ensure consistent deduction
-  [account.id, today]
-);
-
-if (budgetRes.rowCount === 0) {
-  await client.query("ROLLBACK");
-  return res.status(400).json({
-    status: "fail",
-    message: "No budget set for today",
-  });
-}
-
-let remaining = amount;
-const budgets = budgetRes.rows;
-
-for (const budget of budgets) {
-  const available = budget.allocated - budget.spent;
-
-  if (available <= 0) continue; // skip exhausted budgets
-
-  if (remaining <= available) {
-    // Deduct partially and finish
-    await client.query(
-      `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
-      [remaining, budget.id]
-    );
-    remaining = 0;
-    break;
-  } else {
-    // Deduct everything from this budget and move on
-    await client.query(
-      `UPDATE budgets SET spent = allocated WHERE id = $1`,
-      [budget.id]
-    );
-    remaining -= available;
-  }
-}
-
-if (remaining > 0) {
-  // Not enough across all floats
-  await client.query("ROLLBACK");
-  return res.status(400).json({
-    status: "fail",
-    message: "Insufficient budget across today's floats",
-  });
-}
-
+    /* =====================================================
+     * 6. Commit
+     * =================================================== */
     await client.query("COMMIT");
 
     return res.status(200).json({
       status: "success",
-      message: "Withdrawal approved and processed",
+      message: "Withdrawal approved successfully",
       data: {
-        received: amount,
-        // commission,
-        deducted: totalDeduction,
-        newBalance: parseFloat(account.balance) - totalDeduction,
+        transaction_id: transaction.id,
+        withdrawn: amount,
+        newBalance: account.balance - amount,
       },
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("Error approving transaction:", error.message);
-    return res.status(500).json({
-      status: "error",
-      message: "Internal server error",
-      error: error.message,
+    console.error("Approve transaction error:", error.message);
+
+    return res.status(400).json({
+      status: "fail",
+      message: error.message,
     });
   } finally {
     client.release();

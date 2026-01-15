@@ -9,6 +9,7 @@ import authRouter from './auth/authRoutes.mjs';
 import { messageRouter } from './messageRoutes.mjs';
 import { financeRoutes } from './expenseRoutes.mjs';
 import { loanRoutes } from './loanRoutes.mjs';
+import { floatRoutes } from './floatRoutes.mjs';
 
 const allRoutes = Router();
 
@@ -21,6 +22,6 @@ allRoutes.use('/api/transactions', transactionRouter);
 allRoutes.use('/api/messages', messageRouter);
 allRoutes.use('/api/financials', financeRoutes);
 allRoutes.use('/api/loans', loanRoutes);
-
+allRoutes.use('/api/float', floatRoutes);
 
 export default allRoutes;
