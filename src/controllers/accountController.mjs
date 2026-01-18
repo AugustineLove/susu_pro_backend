@@ -11,21 +11,21 @@ export const createAccount = async (req, res) => {
     minimum_balance, 
     interest_rate, 
     initial_deposit = 0,
-    created_by_type
+    created_by_type,
+    account_number,
   } = req.body;
 
-  if (!customer_id || !account_type || !created_by || !company_id) {
+  if (!customer_id || !account_type || !created_by || !company_id || !account_number) {
     return res.status(400).json({
       status: 'fail',
-      message: 'customer_id, account_type, created_by, and company_id are required',
+      message: 'customer_id, account_type, created_by, company_id, and account_number are required',
     });
   }
 
   try {
    
-    console.log(initial_deposit);
-    const fields = ["customer_id", "account_type", "created_by", "company_id", "created_by_type", "balance"];
-    const values = [customer_id, account_type, created_by, company_id, created_by_type, initial_deposit];
+    const fields = ["customer_id", "account_type", "created_by", "company_id", "created_by_type", "balance", "account_number"];
+    const values = [customer_id, account_type, created_by, company_id, created_by_type, initial_deposit, account_number];
     const placeholders = values.map((_, i) => `$${i + 1}`);
 
     // Optional fields
@@ -82,6 +82,7 @@ export const createAccount = async (req, res) => {
 
 export const getAccountsByCustomer = async (req, res) => {
   const { customerId } = req.params;
+  console.log(customerId);
   try {
     const accounts = await pool.query(
       `SELECT 
@@ -105,6 +106,79 @@ export const getAccountsByCustomer = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching customer accounts:', error.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  }
+};
+
+export const getLastAccountNumber = async (req, res) => {
+  const { staffId } = req.params;
+  console.log("Fetching last account number for staff ID:", staffId);
+
+  try {
+    if (!staffId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'staffId is required',
+      });
+    }
+
+    const query = `
+      SELECT account_number
+      FROM accounts
+      WHERE created_by = $1
+        AND is_deleted = false
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+
+    const { rows } = await pool.query(query, [staffId]);
+
+    return res.json({
+      status: 'success',
+      lastAccountNumber: rows.length ? rows[0].account_number : null,
+    });
+  } catch (error) {
+    console.error('Error fetching last account number:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  }
+};
+
+export const getLastAccountNumbersByStaff = async (req, res) => {
+  try {
+    const query = `
+      SELECT DISTINCT ON (s.id)
+        s.id AS staff_id,
+        s.staff_id AS staff_account_number,
+        s.full_name AS staff_name,
+        c.account_number,
+        c.created_at
+      FROM staff s
+      LEFT JOIN customers c
+        ON c.registered_by = s.id
+        AND c.is_deleted = false
+      WHERE s.role = 'mobile_banker'
+      ORDER BY s.id, c.created_at DESC;
+    `;
+
+    const { rows } = await pool.query(query);
+
+    return res.json({
+      status: 'success',
+      data: rows.map(row => ({
+        staff_id: row.staff_id,
+        staff_name: row.staff_name,
+        staff_account_number: row.staff_account_number,
+        last_account_number: row.account_number || null,
+      })),
+    });
+  } catch (error) {
+    console.error('Error fetching last account numbers:', error);
     return res.status(500).json({
       status: 'error',
       message: 'Internal server error',

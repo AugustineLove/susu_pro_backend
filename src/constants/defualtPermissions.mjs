@@ -5,6 +5,7 @@ export const defaultPermissions = {
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: true,
     MANAGE_STAFF: true,
+    PROCESS_TRANSACTIONS: true,
     SETTINGS_ACCESS: true,
     DELETE_CUSTOMER: true,
     ALTER_ACCOUNT: true,
@@ -16,6 +17,7 @@ export const defaultPermissions = {
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: true,
     MANAGE_STAFF: false,
+    PROCESS_TRANSACTIONS: false,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: true,
     ALTER_ACCOUNT: true,
@@ -27,6 +29,7 @@ export const defaultPermissions = {
     TRANSACTION_CREATE: false,
     VIEW_REPORTS: true,
     MANAGE_STAFF: false,
+    PROCESS_TRANSACTIONS: false,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
     ALTER_ACCOUNT: false
@@ -37,6 +40,7 @@ export const defaultPermissions = {
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: true,
     MANAGE_STAFF: false,
+    PROCESS_TRANSACTIONS: true,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
     ALTER_ACCOUNT: true
@@ -47,6 +51,7 @@ export const defaultPermissions = {
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: false,
     MANAGE_STAFF: false,
+    PROCESS_TRANSACTIONS: true,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
     ALTER_ACCOUNT: false
@@ -57,6 +62,7 @@ export const defaultPermissions = {
     TRANSACTION_CREATE: false,
     VIEW_REPORTS: true,
     MANAGE_STAFF: false,
+    PROCESS_TRANSACTIONS: false,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
     ALTER_ACCOUNT: false
