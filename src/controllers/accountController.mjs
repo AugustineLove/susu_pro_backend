@@ -153,17 +153,17 @@ export const getLastAccountNumbersByStaff = async (req, res) => {
   try {
     const query = `
       SELECT DISTINCT ON (s.id)
-        s.id AS staff_id,
-        s.staff_id AS staff_account_number,
-        s.full_name AS staff_name,
-        c.account_number,
-        c.created_at
-      FROM staff s
-      LEFT JOIN customers c
-        ON c.registered_by = s.id
-        AND c.is_deleted = false
-      WHERE s.role = 'mobile_banker'
-      ORDER BY s.id, c.created_at DESC;
+      s.id AS staff_id,
+      s.staff_id AS staff_account_number,
+      s.full_name AS staff_name,
+      c.account_number,
+      c.created_at
+    FROM staff s
+    LEFT JOIN customers c
+      ON c.registered_by = s.id
+      AND c.is_deleted = false
+    WHERE LOWER(s.role) IN ('mobile banker', 'mobile_banker', 'Mobile Banker','teller')
+    ORDER BY s.id, c.created_at DESC;
     `;
 
     const { rows } = await pool.query(query);
