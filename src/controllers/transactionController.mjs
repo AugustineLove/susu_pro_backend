@@ -164,6 +164,9 @@ export const getRecentTransactions = async (req, res) => {
   t.status,
   t.unique_code,
   t.transaction_date,
+  t.reversed_at,
+  t.reversal_reason,
+  t.reversed_by,
 
   a.id AS account_id,
   a.customer_id,
@@ -178,9 +181,14 @@ export const getRecentTransactions = async (req, res) => {
 
   -- Recording Staff (staff_id)
   rs.id AS recorded_staff_id,
-  rs.full_name AS recorded_staff_name
+  rs.full_name AS recorded_staff_name,
+
+  str.full_name AS reversed_by_name
 
 FROM transactions t
+
+LEFT JOIN staff str
+  ON t.reversed_by = str.id
 
 -- Mobile banker who created it
 LEFT JOIN staff mb 
@@ -565,6 +573,165 @@ export const deleteTransaction = async (req, res) => {
     return res.status(500).json({
       status: 'error',
       message: 'Internal server error',
+    });
+  } finally {
+    client.release();
+  }
+};
+
+export const reverseWithdrawal = async (req, res) => {
+  const { transactionId } = req.params;
+  const { reason, staffId } = req.body;
+  // const staffId = req.user?.id; // from auth middleware
+  console.log(transactionId);
+
+  if (!staffId) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    /* 1️⃣ Fetch transaction */
+    const txRes = await client.query(
+      `
+      SELECT id, amount, account_id, status, type
+      FROM transactions
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [transactionId]
+    );
+
+    if (txRes.rowCount === 0) {
+      throw new Error("Transaction not found");
+    }
+
+    const transaction = txRes.rows[0];
+
+    if (transaction.type !== "withdrawal") {
+      throw new Error("Only withdrawals can be reversed");
+    }
+
+    if (transaction.status !== "approved") {
+      throw new Error("Only approved withdrawals can be reversed");
+    }
+
+    /* 3️⃣ Fetch float movements tied to this withdrawal */
+    const floatRes = await client.query(
+      `
+      SELECT id, budget_id, amount
+      FROM float_movements
+      WHERE source_type = 'withdrawal'
+        AND source_id = $1
+        AND direction = 'debit'
+      `,
+      [transactionId]
+    );
+
+    /* 4️⃣ Reverse each float movement */
+    for (const movement of floatRes.rows) {
+      // Restore budget
+      await client.query(
+        `
+        UPDATE budgets
+        SET spent = spent - $1
+        WHERE id = $2
+        `,
+        [movement.amount, movement.budget_id]
+      );
+
+      // Insert reversal movement
+      await client.query(
+        `
+        INSERT INTO float_movements (
+          budget_id,
+          source_type,
+          source_id,
+          amount,
+          direction,
+          company_id
+        ) VALUES ($1, 'withdrawal', $2, $3, 'credit', (SELECT company_id FROM budgets WHERE id = $1))
+        `,
+        [movement.budget_id, transactionId, movement.amount]
+      );
+    }
+
+    /* 5️⃣ Mark transaction as reversed */
+    await client.query(
+      `
+      UPDATE transactions
+      SET status = 'reversed',
+          reversed_at = NOW(),
+          reversed_by = $1,
+          reversal_reason = $2
+      WHERE id = $3
+      `,
+      [staffId, reason || null, transactionId]
+    );
+
+    /* 1️⃣ Fetch commission for the transaction */
+const commissionResult = await client.query(
+  `
+  SELECT id, status, amount
+  FROM commissions
+  WHERE transaction_id = $1
+  FOR UPDATE
+  `,
+  [transactionId]
+);
+
+let commissionAmount = 0;
+
+if (commissionResult.rowCount > 0) {
+  commissionAmount = parseFloat(commissionResult.rows[0].amount);
+  console.log(`Commission amount: ${commissionAmount}`)
+  await client.query(
+    `
+    UPDATE commissions
+    SET
+      status = 'reversed',
+      reversed_at = NOW(),
+      reversed_by = $1
+    WHERE transaction_id = $2
+    `,
+    [staffId, transactionId]
+  );
+}
+
+const refundAMount = Number(transaction.amount) + Number(commissionAmount);
+const totalRefund = Math.round(refundAMount * 100) / 100;
+await client.query(
+  `
+  UPDATE accounts
+  SET balance = balance + $1
+  WHERE id = $2
+  `,
+  [totalRefund, transaction.account_id]
+);
+
+
+console.log(`Total amount: ${totalRefund}`)
+    await client.query("COMMIT");
+
+    return res.json({
+      success: true,
+      message: "Withdrawal reversed successfully",
+      data: {
+        transactionId,
+        refundedAmount: transaction.amount,
+        floatRestored: floatRes.rowCount > 0
+      }
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to reverse withdrawal"
     });
   } finally {
     client.release();
