@@ -167,6 +167,7 @@ export const getRecentTransactions = async (req, res) => {
   t.reversed_at,
   t.reversal_reason,
   t.reversed_by,
+  t.is_deleted,
 
   a.id AS account_id,
   a.customer_id,
@@ -206,13 +207,12 @@ JOIN customers c
 
 WHERE 
   t.company_id = $1 
-  AND t.is_deleted = false
 
 ORDER BY 
   t.transaction_date DESC;
 
     `, values: [company_id], statement_timeout: 120000});
-
+    // console.log(result.rows);
     res.status(200).json({ status: 'success', data: result.rows });
 
   } catch (error) {
@@ -505,8 +505,8 @@ export const rejectTransaction = async (req, res) => {
 
 export const deleteTransaction = async (req, res) => {
   const { id } = req.params;
-  const { company_id } = req.body; 
-  console.log(id);
+  const { company_id } = req.body;
+  console.log(`Delete transaction id: ${id}`);
   if (!id) {
     return res.status(400).json({
       status: 'fail',
@@ -555,8 +555,15 @@ export const deleteTransaction = async (req, res) => {
 
     // 3. Delete the transaction
     await client.query(
-      `DELETE FROM transactions 
-       WHERE id = $1 AND company_id = $2`,
+       `
+  UPDATE transactions
+  SET 
+    is_deleted = TRUE,
+    deleted_at = NOW()
+  WHERE id = $1
+    AND company_id = $2
+    AND is_deleted = FALSE
+  `,
       [id, company_id]
     );
 
