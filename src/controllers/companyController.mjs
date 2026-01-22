@@ -84,7 +84,12 @@ WHERE company_id = $1
   AND account_type IN ('savings', 'susu', 'Susu', 'Savings')
   AND is_deleted = false;
 `;
-const commissionQuery = 'SELECT COALESCE(SUM(amount), 0) AS total_commissions FROM commissions WHERE company_id = $1';
+const commissionQuery = `SELECT 
+  COALESCE(SUM(amount), 0) AS total_commissions 
+FROM commissions 
+WHERE company_id = $1
+  AND (status IS NULL OR status <> 'reversed');
+`;
 
 const [
   { rows: customers },
