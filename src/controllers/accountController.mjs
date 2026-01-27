@@ -1,31 +1,44 @@
 import pool from "../db.mjs";
+import { generateAccountNumber, getCustomerBaseAccountNumber } from "../services/accountServices.mjs";
 
 export const createAccount = async (req, res) => {
-  const { 
-    customer_id, 
-    account_type, 
-    created_by, 
-    company_id, 
-    daily_rate, 
-    frequency, 
-    minimum_balance, 
-    interest_rate, 
+  const {
+    customer_id,
+    account_type,
+    created_by,
+    company_id,
+    daily_rate,
+    frequency,
+    minimum_balance,
+    interest_rate,
     initial_deposit = 0,
     created_by_type,
-    account_number,
+    account_number // optional
   } = req.body;
 
-  if (!customer_id || !account_type || !created_by || !company_id || !account_number) {
+  if (!customer_id || !account_type || !created_by || !company_id) {
     return res.status(400).json({
-      status: 'fail',
-      message: 'customer_id, account_type, created_by, company_id, and account_number are required',
+      status: "fail",
+      message: "customer_id, account_type, created_by, and company_id are required",
     });
   }
 
   try {
+    // 🔑 base number (however you already get it)
+    const baseNumber = account_number?.replace(/(SU|SA)\d+$/, "")
+      || await getCustomerBaseAccountNumber(customer_id);
+
+    const finalAccountNumber = await generateAccountNumber({
+      customerId: customer_id,
+      baseNumber,
+      accountType: account_type
+    });
+
+    // then continue with your existing insert
+
    
     const fields = ["customer_id", "account_type", "created_by", "company_id", "created_by_type", "balance", "account_number"];
-    const values = [customer_id, account_type, created_by, company_id, created_by_type, initial_deposit, account_number];
+    const values = [customer_id, account_type, created_by, company_id, created_by_type, initial_deposit, finalAccountNumber];
     const placeholders = values.map((_, i) => `$${i + 1}`);
 
     // Optional fields
