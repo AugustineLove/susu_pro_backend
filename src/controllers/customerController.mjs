@@ -1,5 +1,6 @@
 import pool from '../db.mjs';
 import { generateWithdrawalCode } from '../utils/withdrawalCode.mjs';
+import { sendCustomerMessageBackend } from './smsController.mjs';
 
 export const createCustomer = async (req, res) => {
   const {
@@ -72,6 +73,13 @@ export const createCustomer = async (req, res) => {
     ];
 
     const result = await pool.query(insertQuery, values);
+    // if(res.status === 201 || res.status === 200){
+    //   sendCustomerMessageBackend(
+    //     makeSusuProName(company_id),
+    //     message: `Dear ${name}, you have successfully opened a ${formData.account_type} account with ${parentCompanyName}. Your customer account number is, ${addedCustomerData.data.account_number}. \nYour secret withdrawal code is ${addedCustomerData.data.withdrawal_code}. Please do not share this code with anyone. \nThank you for choosing us!`
+    //     phone_number,
+    //     );
+    // }
     return res.status(201).json({
       status: 'success',
       message: 'Customer created successfully.',

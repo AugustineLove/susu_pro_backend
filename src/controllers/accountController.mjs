@@ -149,6 +149,42 @@ export const getLastAccountNumber = async (req, res) => {
   }
 };
 
+export const getLastCustomerAccountNumber = async (req, res) => {
+  const { staffId } = req.params;
+  console.log("Fetching last customer account number for staff ID:", staffId);
+
+  try {
+    if (!staffId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'staffId is required',
+      });
+    }
+
+    const query = `
+      SELECT account_number
+      FROM customers
+      WHERE created_by = $1
+        AND is_deleted = false
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+
+    const { rows } = await pool.query(query, [staffId]);
+
+    return res.json({
+      status: 'success',
+      lastCustomerAccountNumber: rows.length ? rows[0].account_number : null,
+    });
+  } catch (error) {
+    console.error('Error fetching last customer account number:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  }
+};
+
 export const getLastAccountNumbersByStaff = async (req, res) => {
   try {
     const query = `

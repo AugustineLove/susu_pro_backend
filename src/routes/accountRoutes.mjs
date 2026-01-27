@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createAccount, getAccountsByCustomer, getLastAccountNumber, getLastAccountNumbersByStaff } from "../controllers/accountController.mjs";
+import { createAccount, getAccountsByCustomer, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber } from "../controllers/accountController.mjs";
 
 
 export const accountRouter = Router();
@@ -11,3 +11,4 @@ accountRouter.get(
   '/last-account-numbers',
   getLastAccountNumbersByStaff
 );
+accountRouter.get('/last-customer-account-number/:staffId', getLastCustomerAccountNumber);
