@@ -1,4 +1,5 @@
 import pool from '../db.mjs';
+import { generateWithdrawalCode } from '../utils/withdrawalCode.mjs';
 
 export const createCustomer = async (req, res) => {
   const {
@@ -8,6 +9,7 @@ export const createCustomer = async (req, res) => {
     gender,
     email,
     phone_number,
+    momo_number,
     account_number,
     next_of_kin,
     location,
@@ -26,6 +28,8 @@ export const createCustomer = async (req, res) => {
     });
   }
 
+  const withdrawalCode = await generateWithdrawalCode();
+
   try {
     // Check if company exists
     const companyCheck = await pool.query('SELECT id FROM companies WHERE id = $1', [company_id]);
@@ -43,9 +47,9 @@ export const createCustomer = async (req, res) => {
       INSERT INTO customers (
         name, date_of_registration, id_card,
         gender, email, phone_number, next_of_kin, location, daily_rate,
-        company_id, registered_by, date_of_birth, city, account_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-      RETURNING id, name, date_of_registration, id_card, gender, email, phone_number, next_of_kin, location, daily_rate, company_id, registered_by, created_at, date_of_birth, city, account_number
+        company_id, registered_by, date_of_birth, city, account_number, momo_number, withdrawal_code
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING id, name, date_of_registration, id_card, gender, email, phone_number, next_of_kin, location, daily_rate, company_id, registered_by, created_at, date_of_birth, city, account_number, momo_number, withdrawal_code
     `;
 
     const values = [
@@ -62,11 +66,12 @@ export const createCustomer = async (req, res) => {
       registered_by,
       date_of_birth || null,
       city || null,
-      account_number || null
+      account_number || null,
+      momo_number || null,
+      withdrawalCode || null,
     ];
 
     const result = await pool.query(insertQuery, values);
-    console.log(result.rows[0])
     return res.status(201).json({
       status: 'success',
       message: 'Customer created successfully.',
@@ -201,6 +206,7 @@ export const getCustomersByCompany = async (req, res) => {
     c.city,
     c.registered_by,
     c.date_of_birth,
+    c.withdrawal_code,
     c.gender,
     c.date_of_registration,
     s.full_name AS registered_by_name,
