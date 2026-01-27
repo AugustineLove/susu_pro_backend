@@ -164,7 +164,7 @@ export const getLastCustomerAccountNumber = async (req, res) => {
     const query = `
       SELECT account_number
       FROM customers
-      WHERE created_by = $1
+      WHERE registered_by = $1
         AND is_deleted = false
       ORDER BY created_at DESC
       LIMIT 1
