@@ -10,6 +10,7 @@ import { messageRouter } from './messageRoutes.mjs';
 import { financeRoutes } from './expenseRoutes.mjs';
 import { loanRoutes } from './loanRoutes.mjs';
 import { floatRoutes } from './floatRoutes.mjs';
+import commissionRoute from './commissionRouters.mjs';
 
 const allRoutes = Router();
 
@@ -23,5 +24,6 @@ allRoutes.use('/api/messages', messageRouter);
 allRoutes.use('/api/financials', financeRoutes);
 allRoutes.use('/api/loans', loanRoutes);
 allRoutes.use('/api/float', floatRoutes);
+allRoutes.use('/api/commissions', commissionRoute);
 
 export default allRoutes;

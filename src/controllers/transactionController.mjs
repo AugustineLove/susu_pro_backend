@@ -692,7 +692,7 @@ let commissionAmount = 0;
 
 if (commissionResult.rowCount > 0) {
   commissionAmount = parseFloat(commissionResult.rows[0].amount);
-  commissionId = commissionResult.rows[0].id;
+  
   console.log(`Commission amount: ${commissionAmount}`)
   await client.query(
     `
