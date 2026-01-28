@@ -590,8 +590,6 @@ export const reverseWithdrawal = async (req, res) => {
   const { transactionId } = req.params;
   const { reason, staffId } = req.body;
   // const staffId = req.user?.id; // from auth middleware
-  console.log(transactionId);
-
   if (!staffId) {
     return res.status(401).json({ message: "Unauthorized" });
   }
@@ -694,6 +692,7 @@ let commissionAmount = 0;
 
 if (commissionResult.rowCount > 0) {
   commissionAmount = parseFloat(commissionResult.rows[0].amount);
+  commissionId = commissionResult.rows[0].id;
   console.log(`Commission amount: ${commissionAmount}`)
   await client.query(
     `
@@ -706,7 +705,43 @@ if (commissionResult.rowCount > 0) {
     `,
     [staffId, transactionId]
   );
+
+  const commissionTxRes = await client.query(
+  `
+  SELECT id
+  FROM transactions
+  WHERE source_transaction_id = $1
+    AND type = 'commission'
+    AND status != 'reversed'
+  FOR UPDATE
+  `,
+  [transactionId] // withdrawal ID
+);
+
+if (commissionTxRes.rowCount === 0) {
+  console.log('No commission transaction found to reverse');
+} else {
+  const commissionTxId = commissionTxRes.rows[0].id;
+    console.log(`Commission transaction id: ${commissionTxId}`);
+
+  // Update commission transaction row
+  await client.query(
+    `
+    UPDATE transactions
+    SET status = 'reversed',
+        reversed_at = NOW(),
+        reversed_by = $1,
+        reversal_reason = $2
+    WHERE id = $3
+    `,
+    [staffId, reason || null, commissionTxId]
+  );
+
+  console.log('Commission transaction reversed:', commissionTxId);
 }
+}
+
+
 
 const refundAMount = Number(transaction.amount) + Number(commissionAmount);
 const totalRefund = Math.round(refundAMount * 100) / 100;

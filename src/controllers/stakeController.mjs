@@ -175,8 +175,6 @@ export const stakeMoney = async (req, res) => {
 export const deductCommission = async (req, res) => {
   const { accountId } = req.params;
   const { amount, description, created_by, created_by_type, company_id, transaction_id } = req.body;
-  console.log(`Transaction ID: ${transaction_id}`);
-  console.log(accountId, amount, description, created_by_type, created_by, company_id)
   if (!amount || amount <= 0) {
     return res.status(400).json({
       status: 'fail',
@@ -235,10 +233,10 @@ export const deductCommission = async (req, res) => {
 
     const txRes = await client.query(
       `INSERT INTO transactions 
-        (account_id, company_id, type, amount, description, created_by_type, created_by) 
-       VALUES ($1, $2, 'commission', $3, $4, $5, $6)
+        (source_transaction_id, account_id, company_id, type, amount, description, created_by_type, created_by) 
+       VALUES ($1, $2, $3, 'commission', $4, $5, $6, $7)
        RETURNING *`,
-      [accountId, company_id, amount, description || 'Commission deduction', created_by_type, created_by]
+      [transaction_id, accountId, company_id, amount, description || 'Commission deduction', created_by_type, created_by]
     );
 
     await client.query('COMMIT');
