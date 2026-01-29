@@ -51,6 +51,14 @@ export const stakeMoney = async (req, res) => {
     const account = accRes.rows[0];
     const numericAmount = parseFloat(amount);
 
+    if (account.status === 'Inactive'){
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        status: "fail",
+        message: "Account is inactive",
+      });
+    }
+
     if (numericAmount <= 0) {
       await client.query("ROLLBACK");
       return res.status(400).json({

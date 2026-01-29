@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createAccount, getAccountsByCustomer, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber } from "../controllers/accountController.mjs";
+import { createAccount, getAccountsByCustomer, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber, toggleAccountStatus } from "../controllers/accountController.mjs";
 
 
 export const accountRouter = Router();
@@ -12,3 +12,4 @@ accountRouter.get(
   getLastAccountNumbersByStaff
 );
 accountRouter.get('/last-customer-account-number/:staffId', getLastCustomerAccountNumber);
+accountRouter.patch('/:accountId/toggle-status', toggleAccountStatus);

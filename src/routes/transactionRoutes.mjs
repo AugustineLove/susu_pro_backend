@@ -2,7 +2,6 @@ import { Router } from "express";
 import { deductCommission, stakeMoney } from "../controllers/stakeController.mjs";
 import { approveTransaction, deleteTransaction, getCompanyTransactions, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction, reverseWithdrawal, transferBetweenAccounts } from "../controllers/transactionController.mjs";
 
-
 export const transactionRouter = Router();
 
 transactionRouter.post('/stake', stakeMoney);

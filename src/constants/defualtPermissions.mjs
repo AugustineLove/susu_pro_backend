@@ -27,6 +27,20 @@ export const defaultPermissions = {
     ALTER_ACCOUNT: true,
     ALTER_FINANCE: true
   },
+  accountant: {
+  MANAGE_STAFF: false,
+  VIEW_REPORTS: true,
+  ALTER_ACCOUNT: true,
+  ALTER_FINANCE: true,
+  CUSTOMER_EDIT: true,
+  VIEW_BRIEFING: true,
+  CUSTOMER_CREATE: true,
+  DELETE_CUSTOMER: false,
+  LOAN_PRIVILEGES: true,
+  SETTINGS_ACCESS: false,
+  TRANSACTION_CREATE: true,
+  PROCESS_TRANSACTIONS: true
+},
   loan_officer: {
     CUSTOMER_CREATE: false,
     CUSTOMER_EDIT: false,

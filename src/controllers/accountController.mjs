@@ -235,3 +235,62 @@ export const getLastAccountNumbersByStaff = async (req, res) => {
   }
 };
 
+
+export const toggleAccountStatus = async (req, res) => {
+  const { accountId } = req.params;
+  const { company_id, staff_id } = req.body;
+
+  if (!staff_id) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const accRes = await client.query(
+      `
+      SELECT id, status
+      FROM accounts
+      WHERE id = $1 AND company_id = $2
+      FOR UPDATE
+      `,
+      [accountId, company_id]
+    );
+
+    if (accRes.rowCount === 0) {
+      throw new Error("Account not found");
+    }
+
+    const currentStatus = accRes.rows[0].status;
+    const newStatus = currentStatus === "Active" ? "Inactive" : "Active";
+
+    const updateRes = await client.query(
+      `
+      UPDATE accounts
+      SET status = $1
+      WHERE id = $2
+      RETURNING *
+      `,
+      [newStatus, accountId]
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      success: true,
+      message: `Account successfully set to ${newStatus.toLowerCase()}`,
+      data: updateRes.rows[0],
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  } finally {
+    client.release();
+  }
+};
