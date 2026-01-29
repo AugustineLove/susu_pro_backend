@@ -216,6 +216,7 @@ export const getCustomersByCompany = async (req, res) => {
     c.date_of_birth,
     c.withdrawal_code,
     c.gender,
+    c.status,
     c.date_of_registration,
     s.full_name AS registered_by_name,
 
