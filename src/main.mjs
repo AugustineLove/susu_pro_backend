@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import allRoutes from './routes/allRoutes.mjs';
+import './jobs/inactivity.jon.mjs'
 
 dotenv.config();
 const app = express();

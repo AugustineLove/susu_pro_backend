@@ -150,6 +150,14 @@ export const stakeMoney = async (req, res) => {
       transactionParams
     );
 
+    const updateLastActivit = await client.query(
+      `UPDATE accounts
+      SET last_activity_at = NOW()
+      WHERE id = $1;
+      `, [account_id]
+    );
+    console.log(updateLastActivit.rowCount[0])
+
     // 4️⃣ Fetch updated account balance
     const updatedAccountRes = await client.query(
       `SELECT id, account_type, balance FROM accounts WHERE id = $1`,
