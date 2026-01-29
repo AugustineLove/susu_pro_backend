@@ -779,3 +779,271 @@ console.log(`Total amount: ${totalRefund}`)
     client.release();
   }
 };
+
+export const transferBetweenAccounts = async (req, res) => {
+  const {
+    from_account_id,
+    to_account_id,
+    amount,
+    company_id,
+    created_by,
+    created_by_type = "staff",
+    description,
+  } = req.body;
+  console.log(req.body);
+  if (!from_account_id || !to_account_id || !amount || amount <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid transfer data",
+    });
+  }
+
+  if (from_account_id === to_account_id) {
+    return res.status(400).json({
+      success: false,
+      message: "Cannot transfer to the same account",
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    /* 1️⃣ Lock both accounts */
+    const accountsRes = await client.query(
+      `
+      SELECT id, balance
+      FROM accounts
+      WHERE id IN ($1, $2)
+        AND company_id = $3
+      FOR UPDATE
+      `,
+      [from_account_id, to_account_id, company_id]
+    );
+
+    if (accountsRes.rowCount !== 2) {
+      throw new Error("One or both accounts not found");
+    }
+
+    const fromAccount = accountsRes.rows.find(
+      (a) => a.id === from_account_id
+    );
+    const toAccount = accountsRes.rows.find(
+      (a) => a.id === to_account_id
+    );
+
+    if (Number(fromAccount.balance) < Number(amount)) {
+      throw new Error("Insufficient balance");
+    }
+
+    /* 2️⃣ Debit sender */
+    await client.query(
+      `
+      UPDATE accounts
+      SET balance = balance - $1
+      WHERE id = $2
+      `,
+      [amount, from_account_id]
+    );
+
+    /* 3️⃣ Credit receiver */
+    await client.query(
+      `
+      UPDATE accounts
+      SET balance = balance + $1
+      WHERE id = $2
+      `,
+      [amount, to_account_id]
+    );
+
+    /* 4️⃣ Log transactions */
+    const outTx = await client.query(
+      `
+      INSERT INTO transactions (
+        account_id,
+        company_id,
+        type,
+        amount,
+        description,
+        created_by,
+        created_by_type
+      ) VALUES ($1, $2, 'transfer_out', $3, $4, $5, $6)
+      RETURNING *
+      `,
+      [
+        from_account_id,
+        company_id,
+        amount,
+        description || "Transfer to another account",
+        created_by,
+        created_by_type,
+      ]
+    );
+
+    const inTx = await client.query(
+      `
+      INSERT INTO transactions (
+        account_id,
+        company_id,
+        type,
+        amount,
+        description,
+        created_by,
+        created_by_type
+      ) VALUES ($1, $2, 'transfer_in', $3, $4, $5, $6)
+      RETURNING *
+      `,
+      [
+        to_account_id,
+        company_id,
+        amount,
+        description || "Transfer from another account",
+        created_by,
+        created_by_type,
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return res.status(201).json({
+      success: true,
+      message: "Transfer completed successfully",
+      data: {
+        from_account_id,
+        to_account_id,
+        amount,
+        debit_transaction: outTx.rows[0],
+        credit_transaction: inTx.rows[0],
+      },
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Transfer failed",
+    });
+  } finally {
+    client.release();
+  }
+};
+
+export const reverseTransfer = async (req, res) => {
+  const { transactionId } = req.params;
+  const { staffId, reason } = req.body;
+
+  if (!staffId) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    /* 1️⃣ Lock the original transaction */
+    const txRes = await client.query(
+      `
+      SELECT *
+      FROM transactions
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [transactionId]
+    );
+
+    if (txRes.rowCount === 0) {
+      throw new Error("Transaction not found");
+    }
+
+    const tx = txRes.rows[0];
+
+    if (!["transfer_out", "transfer_in"].includes(tx.type)) {
+      throw new Error("Not a transfer transaction");
+    }
+
+    if (tx.status !== "approved") {
+      throw new Error("Only approved transfers can be reversed");
+    }
+
+    /* 2️⃣ Find the linked transaction */
+    const linkedTxRes = await client.query(
+      `
+      SELECT *
+      FROM transactions
+      WHERE source_transaction_id = $1
+         OR id = $1
+      FOR UPDATE
+      `,
+      [tx.source_transaction_id || tx.id]
+    );
+
+    if (linkedTxRes.rowCount !== 2) {
+      throw new Error("Linked transfer transaction not found");
+    }
+
+    const transferOut = linkedTxRes.rows.find(
+      (t) => t.type === "transfer_out"
+    );
+    const transferIn = linkedTxRes.rows.find(
+      (t) => t.type === "transfer_in"
+    );
+
+    if (!transferOut || !transferIn) {
+      throw new Error("Invalid transfer pair");
+    }
+
+    /* 3️⃣ Reverse balances */
+    await client.query(
+      `
+      UPDATE accounts
+      SET balance = balance + $1
+      WHERE id = $2
+      `,
+      [transferOut.amount, transferOut.account_id]
+    );
+
+    await client.query(
+      `
+      UPDATE accounts
+      SET balance = balance - $1
+      WHERE id = $2
+      `,
+      [transferIn.amount, transferIn.account_id]
+    );
+
+    /* 4️⃣ Mark both transactions reversed */
+    await client.query(
+      `
+      UPDATE transactions
+      SET status = 'reversed',
+          reversed_at = NOW(),
+          reversed_by = $1,
+          reversal_reason = $2
+      WHERE id IN ($3, $4)
+      `,
+      [staffId, reason || null, transferOut.id, transferIn.id]
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      success: true,
+      message: "Transfer reversed successfully",
+      data: {
+        reversed_transactions: [transferOut.id, transferIn.id],
+      },
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to reverse transfer",
+    });
+  } finally {
+    client.release();
+  }
+};

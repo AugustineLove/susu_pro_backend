@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { deductCommission, stakeMoney } from "../controllers/stakeController.mjs";
-import { approveTransaction, deleteTransaction, getCompanyTransactions, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction, reverseWithdrawal } from "../controllers/transactionController.mjs";
+import { approveTransaction, deleteTransaction, getCompanyTransactions, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction, reverseWithdrawal, transferBetweenAccounts } from "../controllers/transactionController.mjs";
 
 
 export const transactionRouter = Router();
@@ -16,3 +16,4 @@ transactionRouter.post('/:id/reject', rejectTransaction);
 transactionRouter.delete('/:id', deleteTransaction);
 transactionRouter.post('/commission/:accountId', deductCommission);
 transactionRouter.post('/:transactionId/reverse', reverseWithdrawal);
+transactionRouter.post('/transfer-money', transferBetweenAccounts);
