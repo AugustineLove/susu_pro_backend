@@ -72,6 +72,7 @@ export const recordEntry = async (req, res) => {
      * =================================================== */
     else if (type === "expense") {
       const { description, amount, date, category, recorded_by } = req.body;
+      console.log(req.body);
 
       if (!description || !amount || !date || !category) {
         throw new Error("Missing required expense fields");
@@ -173,7 +174,9 @@ export const recordEntry = async (req, res) => {
         category,
         recorded_by,
         source,
+        notes = '',
       } = req.body;
+      console.log(req.body);
 
       if (!description || !amount || !date || !category) {
         throw new Error("Missing required payment fields");
@@ -183,9 +186,9 @@ export const recordEntry = async (req, res) => {
         `
         INSERT INTO revenue (
           company_id, description, amount, payment_date,
-          category, recorded_by, source
+          category, recorded_by, source, notes
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *;
         `,
         [
@@ -196,6 +199,7 @@ export const recordEntry = async (req, res) => {
           category,
           recorded_by || null,
           source || null,
+          notes,
         ]
       );
 
@@ -243,7 +247,7 @@ export const getCompanyFinancials = async (req, res) => {
         [companyId]
       ),
       pool.query(
-        `SELECT id, description, amount, category, payment_date, created_at, source
+        `SELECT id, description, amount, category, payment_date, created_at, source, status, notes
          FROM revenue
          WHERE company_id = $1
          ORDER BY payment_date DESC`,
@@ -274,6 +278,12 @@ export const getCompanyFinancials = async (req, res) => {
       ),
     ]);
 
+    const totalCommission =
+  commissionsRes.rows.length > 0
+    ? parseFloat(commissionsRes.rows[0].total_commission)
+    : 0;
+
+
     res.json({
       status: "success",
       data: {
@@ -281,7 +291,7 @@ export const getCompanyFinancials = async (req, res) => {
         revenue: paymentsRes.rows,
         assets: assetsRes.rows,
         budgets: budgetsRes.rows,
-        totalCommission: parseFloat(commissionsRes.rows[0].total_commission),
+        totalCommission: totalCommission,
       },
     });
   } catch (error) {
