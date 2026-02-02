@@ -170,7 +170,9 @@ export const getRecentTransactions = async (req, res) => {
   t.is_deleted,
 
   a.id AS account_id,
-  a.customer_id,
+  a.customer_id AS customer_id,
+  a.account_type AS account_type,
+  a.account_number AS account_number,
 
   c.name AS customer_name,
   c.phone_number AS customer_phone,

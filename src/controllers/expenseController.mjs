@@ -154,8 +154,8 @@ export const recordEntry = async (req, res) => {
         // 🚨 No budget today → create negative float
         await client.query(
           `
-          INSERT INTO budgets (company_id, date, allocated, spent)
-          VALUES ($1, $2, 0, $3);
+          INSERT INTO budgets (company_id, date, allocated, spent, status)
+          VALUES ($1, $2, 0, $3, 'Active');
           `,
           [company_id, today, expenseAmount]
         );
@@ -261,7 +261,7 @@ export const getCompanyFinancials = async (req, res) => {
         [companyId]
       ),
       pool.query(
-        `SELECT id, allocated, spent, date, remaining
+        `SELECT id, allocated, spent, date, remaining, status
          FROM budgets
          WHERE company_id = $1
          ORDER BY date DESC`,
@@ -307,11 +307,11 @@ export const getCompanyFinancials = async (req, res) => {
 
 export const addBudget = async (req, res) => {
   const { company_id, allocated, source, recorded_by } = req.body;
-  console.log("Adding budget:", req.body);
-  if (!company_id || !allocated) {
+
+  if (!company_id || !allocated || Number(allocated) <= 0) {
     return res.status(400).json({
       status: "fail",
-      message: "company_id and allocated are required",
+      message: "company_id and a valid allocated amount are required",
     });
   }
 
@@ -321,40 +321,64 @@ export const addBudget = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1️⃣ Get or create today's budget
+    // 1️⃣ Check if today's budget exists
     const budgetRes = await client.query(
-      `SELECT * FROM budgets
-       WHERE company_id = $1 AND date = $2`,
+      `
+      SELECT *
+      FROM budgets
+      WHERE company_id = $1
+        AND date = $2
+      FOR UPDATE
+      `,
       [company_id, today]
     );
 
     let budget;
 
+    // 2️⃣ If no budget → create one (Active by default)
     if (budgetRes.rowCount === 0) {
       const insertRes = await client.query(
-        `INSERT INTO budgets (company_id, date, allocated, spent)
-         VALUES ($1, $2, $3, 0)
-         RETURNING *`,
+        `
+        INSERT INTO budgets (company_id, date, allocated, spent, status)
+        VALUES ($1, $2, $3, 0, 'Active')
+        RETURNING *
+        `,
         [company_id, today, allocated]
       );
 
       budget = insertRes.rows[0];
+
     } else {
+      budget = budgetRes.rows[0];
+
+      if (budget.status !== "Active") {
+        await client.query("ROLLBACK");
+        return res.status(403).json({
+          status: "fail",
+          message: `Budget is ${budget.status}. You cannot add funds to this budget.`,
+        });
+      }
+
+      // 3️⃣ Update allocated amount
       const updateRes = await client.query(
-        `UPDATE budgets
-         SET allocated = allocated + $1
-         WHERE id = $2
-         RETURNING *`,
-        [allocated, budgetRes.rows[0].id]
+        `
+        UPDATE budgets
+        SET allocated = allocated + $1
+        WHERE id = $2
+        RETURNING *
+        `,
+        [allocated, budget.id]
       );
 
       budget = updateRes.rows[0];
     }
 
-    // 2️⃣ Record the top-up history
+    // 4️⃣ Record top-up history
     await client.query(
-      `INSERT INTO budget_topups (budget_id, amount, source, recorded_by)
-       VALUES ($1, $2, $3, $4)`,
+      `
+      INSERT INTO budget_topups (budget_id, amount, source, recorded_by)
+      VALUES ($1, $2, $3, $4)
+      `,
       [budget.id, allocated, source || "manual", recorded_by || null]
     );
 
@@ -370,12 +394,11 @@ export const addBudget = async (req, res) => {
 
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("Error adding budget:", error.message);
+    console.error("Error adding budget:", error);
 
     return res.status(500).json({
       status: "error",
       message: "Internal server error",
-      error: error.message,
     });
   } finally {
     client.release();

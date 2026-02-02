@@ -20,7 +20,8 @@ export const sendCustomerMessage = async (req, res) => {
         data : data
         };
 
-    axios(config)
+    if(messageFrom === 'BigGod Susu'){
+      axios(config)
     .then(function (response) {
     console.log(JSON.stringify(response.data));
     res.status(200).json(response.data)
@@ -28,6 +29,7 @@ export const sendCustomerMessage = async (req, res) => {
     .catch(function (error) {
     console.log(error);
   });
+    }
 }
 
 
@@ -48,7 +50,8 @@ export const sendCustomerMessageBackend = async (messageTo, messageFrom, message
         data : data
         };
 
-    axios(config)
+    if(companyName === 'BigGod Susu'){
+      axios(config)
     .then(function (response) {
     console.log(JSON.stringify(response.data));
     res.status(200).json(response.data)
@@ -56,4 +59,5 @@ export const sendCustomerMessageBackend = async (messageTo, messageFrom, message
     .catch(function (error) {
     console.log(error);
   });
+    }
 }

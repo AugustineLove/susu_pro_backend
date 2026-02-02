@@ -341,7 +341,8 @@ export const udpateCustomerInfoMobile = async (req, res) => {
     location,
     gender,
     date_of_birth,
-    id_card
+    id_card,
+    momo_number
   } = req.body;
 
   console.log(id, name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth, id_card);
@@ -358,11 +359,12 @@ export const udpateCustomerInfoMobile = async (req, res) => {
         location = $5,
         gender = $6,
         date_of_birth = $7,
-        id_card = $8
+        id_card = $8,
+        momo_number = $10
       WHERE id = $9
       RETURNING *;
       `,
-      [name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth, id_card, id]
+      [name, phone_number, next_of_kin, daily_rate, location, gender, date_of_birth, id_card, id, momo_number]
     );
 
     if (result.rows.length === 0) {

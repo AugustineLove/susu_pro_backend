@@ -11,6 +11,7 @@ import { financeRoutes } from './expenseRoutes.mjs';
 import { loanRoutes } from './loanRoutes.mjs';
 import { floatRoutes } from './floatRoutes.mjs';
 import commissionRoute from './commissionRouters.mjs';
+import budgetRoutes from './budgetRoutes.mjs';
 
 const allRoutes = Router();
 
@@ -25,5 +26,6 @@ allRoutes.use('/api/financials', financeRoutes);
 allRoutes.use('/api/loans', loanRoutes);
 allRoutes.use('/api/float', floatRoutes);
 allRoutes.use('/api/commissions', commissionRoute);
+allRoutes.use('/api/budgets', budgetRoutes);
 
 export default allRoutes;
