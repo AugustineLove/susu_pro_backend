@@ -559,12 +559,14 @@ export const deleteTransaction = async (req, res) => {
     await client.query(
        `
   UPDATE transactions
-  SET 
-    is_deleted = TRUE,
-    deleted_at = NOW()
-  WHERE id = $1
-    AND company_id = $2
-    AND is_deleted = FALSE
+SET 
+  is_deleted = TRUE,
+  deleted_at = NOW(),
+  status = 'reversed'
+WHERE id = $1
+  AND company_id = $2
+  AND is_deleted = FALSE;
+
   `,
       [id, company_id]
     );
