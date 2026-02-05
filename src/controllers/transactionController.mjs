@@ -566,7 +566,6 @@ SET
 WHERE id = $1
   AND company_id = $2
   AND is_deleted = FALSE;
-
   `,
       [id, company_id]
     );

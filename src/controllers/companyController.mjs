@@ -76,7 +76,7 @@ export const getCompanyStats = async (req, res) => {
   try {
     const companyId = req.user.type === 'staff' ? req.user.companyId : req.user.id;
     console.log('Fetching stats for company ID:', companyId);
-const customerQuery = 'SELECT COUNT(*) FROM customers WHERE company_id = $1';
+const customerQuery = 'SELECT COUNT(*) FROM customers WHERE company_id = $1 AND is_deleted = false';
 const transactionQuery = 'SELECT COUNT(*) FROM transactions WHERE company_id = $1';
 const balanceQuery = `SELECT COALESCE(SUM(balance), 0) AS total_balance
 FROM accounts
