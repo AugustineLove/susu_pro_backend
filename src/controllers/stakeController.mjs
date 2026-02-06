@@ -11,6 +11,7 @@ export const stakeMoney = async (req, res) => {
     unique_code,
     transaction_date,
     staff_id,
+    withdrawal_type,
   } = req.body;
   console.log(`Staff ID: ${staff_id}`);
 
@@ -109,14 +110,14 @@ export const stakeMoney = async (req, res) => {
     const insertTransactionQuery = transaction_date
       ? `
         INSERT INTO transactions (
-          account_id, amount, type, status, created_by, company_id, description, unique_code, transaction_date, staff_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          account_id, amount, type, status, created_by, company_id, description, unique_code, transaction_date, staff_id, withdrawal_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id, account_id, amount, type, status, transaction_date
       `
       : `
         INSERT INTO transactions (
-          account_id, amount, type, status, created_by, company_id, description, unique_code, staff_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          account_id, amount, type, status, created_by, company_id, description, unique_code, staff_id, withdrawal_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id, account_id, amount, type, status, transaction_date
       `;
 
@@ -132,6 +133,7 @@ export const stakeMoney = async (req, res) => {
           unique_code,
           transaction_date,
           staff_id,
+          withdrawal_type,
         ]
       : [
           account_id,
@@ -143,6 +145,7 @@ export const stakeMoney = async (req, res) => {
           description,
           unique_code,
           staff_id,
+          withdrawal_type,
         ];
 
     const transactionResult = await client.query(
