@@ -168,6 +168,7 @@ export const getRecentTransactions = async (req, res) => {
   t.reversal_reason,
   t.reversed_by,
   t.is_deleted,
+  t.withdrawal_type,
 
   a.id AS account_id,
   a.customer_id AS customer_id,
