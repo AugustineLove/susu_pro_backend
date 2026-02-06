@@ -101,7 +101,7 @@ export const getAccountsByCustomer = async (req, res) => {
       `SELECT 
          *
        FROM accounts 
-       WHERE customer_id = $1 AND is_deleted = false`,
+       WHERE customer_id = $1`,
       [customerId]
     );
 
@@ -142,7 +142,6 @@ export const getLastAccountNumber = async (req, res) => {
       SELECT account_number
       FROM accounts
       WHERE created_by = $1
-        AND is_deleted = false
       ORDER BY created_at DESC
       LIMIT 1
     `;
@@ -178,7 +177,6 @@ export const getLastCustomerAccountNumber = async (req, res) => {
       SELECT account_number
       FROM customers
       WHERE registered_by = $1
-        AND is_deleted = false
       ORDER BY created_at DESC
       LIMIT 1
     `;
@@ -210,7 +208,6 @@ export const getLastAccountNumbersByStaff = async (req, res) => {
     FROM staff s
     LEFT JOIN customers c
       ON c.registered_by = s.id
-      AND c.is_deleted = false
     WHERE LOWER(s.role) IN ('mobile banker', 'mobile_banker', 'Mobile Banker','teller')
     ORDER BY s.id, c.created_at DESC;
     `;
