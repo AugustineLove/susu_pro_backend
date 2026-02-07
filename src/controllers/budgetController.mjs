@@ -17,6 +17,7 @@ export const getFloatActivity = async (req, res) => {
   t.id AS transaction_id,
   t.status AS transaction_status,
   t.amount AS withdrawal_amount,
+  t.description AS description,
 
   c.name AS customer_name,
   c.account_number,
