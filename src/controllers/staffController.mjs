@@ -230,5 +230,185 @@ export const getAllStaffByCompany = async (req, res) => {
   }
 };
 
+export const getAllStaffWithFiltering = async (req, res) => {
+  const { company_id, role, status } = req.query;
+
+  if (!company_id) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'company_id is required as a query parameter.',
+    });
+  }
+
+  try {
+    let baseQuery = `SELECT * FROM staff WHERE company_id = $1`;
+    const params = [company_id];
+
+    if (role) {
+      params.push(role);
+      baseQuery += ` AND role = $${params.length}`;
+    }
+
+    if (status) {
+      params.push(status);
+      baseQuery += ` AND status = $${params.length}`;
+    }
+
+    const result = await pool.query(baseQuery, params);
+
+    return res.status(200).json({
+      status: 'success',
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error('Error fetching staff:', error.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error.',
+    });
+  }
+};
 
 
+export const getStaffById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(`SELECT * FROM staff WHERE id = $1`, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Staff not found' });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error('Error fetching staff:', error.message);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
+export const getStaffDashboardByCompany = async (req, res) => {
+  const { company_id } = req.query;
+  if (!company_id) {
+    return res.status(400).json({
+      status: "fail",
+      message: "company_id is required as a query parameter.",
+    });
+  }
+
+  try {
+    // 1️⃣ Fetch main staff stats
+    const staffQuery = `
+      SELECT
+        s.id,
+        s.full_name AS name,
+        s.phone,
+        s.email,
+        s.role,
+        s.company_id,
+        s.created_at,
+
+        -- Total active customers registered by this staff
+        COALESCE(cust.total_customers, 0) AS "totalCustomers",
+
+        -- Total deposits ever made by this staff
+        COALESCE(dep.total_deposits, 0) AS "totalDeposits",
+
+        -- Total deposits made today
+        COALESCE(dep_today.today_deposits, 0) AS "todayDeposits",
+
+        -- Last activity (most recent transaction)
+        COALESCE(last_tx.last_activity, NULL) AS "lastActivity",
+
+        s.permissions,
+        s.status,
+
+        ROUND((
+          0.6 * COALESCE(dep.total_deposits, 0) / 100000 +
+          0.4 * COALESCE(cust.total_customers, 0) / 100
+        ) * 100)::int AS performance
+
+      FROM staff s
+
+      -- Total active customers
+      LEFT JOIN (
+        SELECT registered_by, COUNT(*) AS total_customers
+        FROM customers
+        WHERE is_deleted = false AND status = 'Active'
+        GROUP BY registered_by
+      ) cust ON cust.registered_by = s.id
+
+      -- Total deposits ever
+      LEFT JOIN (
+        SELECT created_by AS staff_id, SUM(amount) AS total_deposits
+        FROM transactions
+        WHERE type = 'deposit' AND status = 'completed' AND is_deleted = false
+        GROUP BY created_by
+      ) dep ON dep.staff_id = s.id
+
+      -- Total deposits today
+      LEFT JOIN (
+        SELECT created_by AS staff_id, SUM(amount) AS today_deposits
+        FROM transactions
+        WHERE type = 'deposit' AND status = 'completed' AND is_deleted = false
+          AND transaction_date::date = CURRENT_DATE
+        GROUP BY created_by
+      ) dep_today ON dep_today.staff_id = s.id
+
+      -- Last activity
+      LEFT JOIN (
+        SELECT staff_id, MAX(transaction_date) AS last_activity
+        FROM transactions
+        WHERE is_deleted = false
+        GROUP BY staff_id
+      ) last_tx ON last_tx.staff_id = s.id
+
+      WHERE s.company_id = $1
+      ORDER BY s.full_name;
+    `;
+    const staffResult = await pool.query(staffQuery, [company_id]);
+    const staffRows = staffResult.rows;
+
+    // 2️⃣ Fetch accounts per staff
+    const accountsQuery = `
+      SELECT
+        c.registered_by AS staff_id,
+        ARRAY_AGG(DISTINCT a.account_type) AS accounts
+      FROM customers c
+      LEFT JOIN accounts a ON a.customer_id = c.id
+      WHERE c.company_id = $1
+      GROUP BY c.registered_by;
+    `;
+    const accountsResult = await pool.query(accountsQuery, [company_id]);
+
+    // 3️⃣ Map accounts to staff
+    const accountsMap = {};
+    accountsResult.rows.forEach(row => {
+      accountsMap[row.staff_id] = row.accounts || [];
+    });
+
+    // 4️⃣ Combine staff stats + accounts
+    const staffWithAccounts = staffRows.map(staff => ({
+      ...staff,
+      accounts: accountsMap[staff.id] || [],
+    }));
+
+
+
+    // 5️⃣ Return final response
+    return res.status(200).json({
+      status: "success",
+      data: staffWithAccounts,
+    });
+
+  } catch (error) {
+    console.error("Error fetching staff dashboard:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error.",
+    });
+  }
+};
