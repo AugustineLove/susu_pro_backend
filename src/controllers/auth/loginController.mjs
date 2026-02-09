@@ -10,11 +10,14 @@ export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    console.log(req.body);
+
     // 1. First, check if email belongs to a company
     let { rows } = await pool.query(
       'SELECT * FROM companies WHERE company_email = $1',
       [email]
     );
+    console.log(rows[0]);
 
     if (rows.length > 0) {
       const company = rows[0];

@@ -351,11 +351,11 @@ export const getStaffDashboardByCompany = async (req, res) => {
 
       -- Total deposits today
       LEFT JOIN (
-        SELECT created_by AS staff_id, SUM(amount) AS today_deposits
+        SELECT staff_id AS staff_id, SUM(amount) AS today_deposits
         FROM transactions
         WHERE type = 'deposit' AND status = 'completed' AND is_deleted = false
           AND transaction_date::date = CURRENT_DATE
-        GROUP BY created_by
+        GROUP BY staff_id
       ) dep_today ON dep_today.staff_id = s.id
 
       -- Last activity
