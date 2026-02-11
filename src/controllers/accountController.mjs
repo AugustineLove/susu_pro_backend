@@ -126,6 +126,39 @@ export const getAccountsByCustomer = async (req, res) => {
   }
 };
 
+export const getAllCompanyAccounts = async (req, res) => {
+  const { companyId } = req.params;
+  console.log(companyId);
+  try {
+    const accounts = await pool.query(
+      `SELECT 
+         *
+       FROM accounts 
+       WHERE company_id = $1`,
+      [companyId]
+    );
+
+    if (accounts.rows.length === 0) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No accounts found for this company.',
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      results: accounts.rowCount,
+      data: accounts.rows,
+    });
+  } catch (error) {
+    console.error('Error fetching customer accounts:', error.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  }
+};
+
 export const getLastAccountNumber = async (req, res) => {
   const { staffId } = req.params;
   console.log("Fetching last account number for staff ID:", staffId);

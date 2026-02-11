@@ -1,11 +1,12 @@
 import { Router } from "express";
-import { createAccount, getAccountsByCustomer, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber, toggleAccountStatus } from "../controllers/accountController.mjs";
+import { createAccount, getAccountsByCustomer, getAllCompanyAccounts, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber, toggleAccountStatus } from "../controllers/accountController.mjs";
 
 
 export const accountRouter = Router();
 
 accountRouter.post('/create', createAccount);
 accountRouter.get('/customer/:customerId', getAccountsByCustomer);
+accountRouter.get('/company/:companyId', getAllCompanyAccounts);
 accountRouter.get('/last-account-number/:staffId', getLastAccountNumber);
 accountRouter.get(
   '/last-account-numbers',
