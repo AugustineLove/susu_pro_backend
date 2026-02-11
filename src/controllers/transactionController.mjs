@@ -758,8 +758,6 @@ await client.query(
   [totalRefund, transaction.account_id]
 );
 
-
-console.log(`Total amount: ${totalRefund}`)
     await client.query("COMMIT");
 
     return res.json({
