@@ -77,6 +77,14 @@ export const stakeMoney = async (req, res) => {
       });
     }
 
+    if(transaction_type === "withdrawal" && numericAmount > account.minimum_balance){
+       await client.query("ROLLBACK");
+      return res.status(400).json({
+        status: "minimum_balance",
+        message: "Insufficient minimum balance for withdrawal",
+      });
+    }
+
     // 1️⃣ Record the stake
     await client.query(
       `INSERT INTO stakes (account_id, amount, staked_by)

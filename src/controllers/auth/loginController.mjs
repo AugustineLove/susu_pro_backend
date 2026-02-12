@@ -15,7 +15,6 @@ export const loginUser = async (req, res) => {
       'SELECT * FROM companies WHERE company_email = $1',
       [email]
     );
-    console.log(rows[0]);
 
     if (rows.length > 0) {
       const company = rows[0];
@@ -112,6 +111,7 @@ export const loginUser = async (req, res) => {
         companyId: staff.company_id,
         role: staff.role,
         permissions: staff.permissions,
+        staffId: staff.staff_id,
       },
       JWT_SECRET,
       { expiresIn: '7d' }
@@ -134,6 +134,7 @@ export const loginUser = async (req, res) => {
         two_factor_enabled: staff.two_factor_enabled,
         login_notifications: staff.login_notifications,
         has_paid: true,
+        staffId: staff.staff_id,
         signupDate: staff.created_at, 
         permissions: staff.permissions,
         type: 'staff', 

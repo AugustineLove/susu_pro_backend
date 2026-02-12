@@ -1,6 +1,7 @@
 export const defaultPermissions = {
   admin: {
     CUSTOMER_CREATE: true,
+    MANAGE_CASHACCOUNTS: true,
     CUSTOMER_EDIT: true,
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: true,
@@ -15,6 +16,7 @@ export const defaultPermissions = {
   },
   manager: {
     CUSTOMER_CREATE: true,
+    MANAGE_CASHACCOUNTS: true,
     CUSTOMER_EDIT: true,
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: true,
@@ -35,6 +37,7 @@ export const defaultPermissions = {
   CUSTOMER_EDIT: true,
   VIEW_BRIEFING: true,
   CUSTOMER_CREATE: true,
+  MANAGE_CASHACCOUNTS: true,
   DELETE_CUSTOMER: false,
   LOAN_PRIVILEGES: true,
   SETTINGS_ACCESS: false,
@@ -43,6 +46,7 @@ export const defaultPermissions = {
 },
   loan_officer: {
     CUSTOMER_CREATE: false,
+    MANAGE_CASHACCOUNTS: false,
     CUSTOMER_EDIT: false,
     TRANSACTION_CREATE: false,
     VIEW_REPORTS: true,
@@ -56,6 +60,7 @@ export const defaultPermissions = {
   },
   mobile_banker: {
     CUSTOMER_CREATE: true,
+    MANAGE_CASHACCOUNTS: false,
     CUSTOMER_EDIT: true,
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: true,
@@ -69,6 +74,7 @@ export const defaultPermissions = {
   },
   teller: {
     CUSTOMER_CREATE: false,
+    MANAGE_CASHACCOUNTS: false,
     CUSTOMER_EDIT: false,
     TRANSACTION_CREATE: true,
     VIEW_REPORTS: false,
@@ -82,6 +88,7 @@ export const defaultPermissions = {
   },
   viewer: {
     CUSTOMER_CREATE: false,
+    MANAGE_CASHACCOUNTS: false,
     CUSTOMER_EDIT: false,
     TRANSACTION_CREATE: false,
     VIEW_REPORTS: true,
