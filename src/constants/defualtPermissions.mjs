@@ -44,6 +44,36 @@ export const defaultPermissions = {
   TRANSACTION_CREATE: true,
   PROCESS_TRANSACTIONS: true
 },
+  hr: {
+  MANAGE_STAFF: false,
+  VIEW_REPORTS: true,
+  ALTER_ACCOUNT: true,
+  ALTER_FINANCE: true,
+  CUSTOMER_EDIT: true,
+  VIEW_BRIEFING: true,
+  CUSTOMER_CREATE: true,
+  MANAGE_CASHACCOUNTS: true,
+  DELETE_CUSTOMER: false,
+  LOAN_PRIVILEGES: true,
+  SETTINGS_ACCESS: false,
+  TRANSACTION_CREATE: true,
+  PROCESS_TRANSACTIONS: true
+},
+  sales_manager: {
+  MANAGE_STAFF: false,
+  VIEW_REPORTS: true,
+  ALTER_ACCOUNT: true,
+  ALTER_FINANCE: true,
+  CUSTOMER_EDIT: true,
+  VIEW_BRIEFING: true,
+  CUSTOMER_CREATE: true,
+  MANAGE_CASHACCOUNTS: false,
+  DELETE_CUSTOMER: false,
+  LOAN_PRIVILEGES: false,
+  SETTINGS_ACCESS: false,
+  TRANSACTION_CREATE: true,
+  PROCESS_TRANSACTIONS: false
+},
   loan_officer: {
     CUSTOMER_CREATE: false,
     MANAGE_CASHACCOUNTS: false,

@@ -241,7 +241,7 @@ export const getLastAccountNumbersByStaff = async (req, res) => {
     FROM staff s
     LEFT JOIN customers c
       ON c.registered_by = s.id
-    WHERE LOWER(s.role) IN ('mobile banker', 'mobile_banker', 'Mobile Banker','teller', 'manager', 'accountant')
+    WHERE LOWER(s.role) IN ('mobile banker', 'mobile_banker', 'Mobile Banker','teller', 'manager', 'accountant', 'sales_manager', 'hr')
     ORDER BY s.id, c.created_at DESC;
     `;
 
