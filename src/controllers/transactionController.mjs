@@ -397,8 +397,8 @@ export const approveTransaction = async (req, res) => {
       // 🚨 No float today → create NEGATIVE float
       const { rows } = await client.query(
         `
-        INSERT INTO budgets (company_id, date, allocated, spent)
-        VALUES ($1, $2, 0, $3)
+        INSERT INTO budgets (company_id, date, allocated, spent, status)
+        VALUES ($1, $2, 0, $3, 'Active')
         RETURNING id
         `,
         [account.company_id, today, amount]

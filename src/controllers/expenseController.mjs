@@ -307,6 +307,7 @@ export const getCompanyFinancials = async (req, res) => {
 
 export const addBudget = async (req, res) => {
   const { company_id, allocated, source, recorded_by } = req.body;
+  console.log(req.body);
 
   if (!company_id || !allocated || Number(allocated) <= 0) {
     return res.status(400).json({
