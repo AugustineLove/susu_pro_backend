@@ -138,6 +138,7 @@ export const loginUser = async (req, res) => {
         signupDate: staff.created_at, 
         permissions: staff.permissions,
         type: 'staff', 
+        change_password_after_signin: staff.change_password_after_signin,
       },
     });
   } catch (error) {
