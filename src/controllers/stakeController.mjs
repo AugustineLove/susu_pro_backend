@@ -77,7 +77,7 @@ export const stakeMoney = async (req, res) => {
       });
     }
 
-    if(transaction_type === "withdrawal" && numericAmount >= (account.balance - account.minimum_balance)){
+    if(transaction_type === "withdrawal" && numericAmount > (account.balance - account.minimum_balance)){
        await client.query("ROLLBACK");
       return res.status(400).json({
         status: "minimum_balance",
