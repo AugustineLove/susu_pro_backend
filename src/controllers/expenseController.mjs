@@ -151,7 +151,6 @@ export const recordEntry = async (req, res) => {
           );
         }
       } else {
-        // 🚨 No budget today → create negative float
         await client.query(
           `
           INSERT INTO budgets (company_id, date, allocated, spent, status)

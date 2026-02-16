@@ -37,7 +37,7 @@ export const stakeMoney = async (req, res) => {
 
     // Fetch account details (include type for logic)
     const accRes = await client.query(
-      `SELECT id, balance, account_type FROM accounts WHERE id = $1`,
+      `SELECT id, balance, account_type, minimum_balance FROM accounts WHERE id = $1`,
       [account_id]
     );
 
@@ -77,7 +77,7 @@ export const stakeMoney = async (req, res) => {
       });
     }
 
-    if(transaction_type === "withdrawal" && numericAmount >= account.minimum_balance){
+    if(transaction_type === "withdrawal" && numericAmount >= (account.balance - account.minimum_balance)){
        await client.query("ROLLBACK");
       return res.status(400).json({
         status: "minimum_balance",
