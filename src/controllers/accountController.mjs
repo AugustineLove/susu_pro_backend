@@ -324,3 +324,89 @@ export const toggleAccountStatus = async (req, res) => {
     client.release();
   }
 };
+
+export const updateAccountSettings = async (req, res) => {
+  const { accountId } = req.params;
+  const {
+    allow_negative_balance,
+    overdraft_limit,
+    low_balance_threshold,
+    minimum_balance,
+  } = req.body;
+
+  const companyId = req.user?.companyId; // from JWT middleware
+
+  try {
+    // 1️⃣ Check account exists and belongs to company
+    const { rows } = await pool.query(
+      `SELECT id, balance 
+       FROM accounts 
+       WHERE id = $1 AND company_id = $2`,
+      [accountId, companyId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: "Account not found."
+      });
+    }
+
+    const account = rows[0];
+
+    // 2️⃣ Validation
+
+    if (overdraft_limit !== undefined && overdraft_limit < 0) {
+      return res.status(400).json({
+        message: "Overdraft limit cannot be negative."
+      });
+    }
+
+    if (low_balance_threshold !== undefined && low_balance_threshold < 0) {
+      return res.status(400).json({
+        message: "Low balance threshold cannot be negative."
+      });
+    }
+
+    // If negative balance is being disabled,
+    // ensure current balance is not below zero
+    if (
+      allow_negative_balance === false &&
+      account.balance < 0
+    ) {
+      return res.status(400).json({
+        message:
+          "Cannot disable negative balance while account balance is negative."
+      });
+    }
+
+    // 3️⃣ Perform Partial Update
+    await pool.query(
+      `UPDATE accounts
+       SET
+         allow_negative_balance = COALESCE($1, allow_negative_balance),
+         overdraft_limit = COALESCE($2, overdraft_limit),
+         low_balance_threshold = COALESCE($3, low_balance_threshold),
+         minimum_balance = $6
+       WHERE id = $4 AND company_id = $5`,
+      [
+        allow_negative_balance,
+        overdraft_limit,
+        low_balance_threshold,
+        accountId,
+        companyId,
+        minimum_balance
+      ]
+    );
+
+    return res.status(200).json({
+      message: "Account settings updated successfully."
+    });
+
+  } catch (error) {
+    console.error("Update account settings error:", error);
+    return res.status(500).json({
+      message: "Internal server error."
+    });
+  }
+};
+
