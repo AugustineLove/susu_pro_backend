@@ -194,144 +194,183 @@ export const getCustomersByStaff = async (req, res) => {
   }
 };
 
-
 export const getCustomersByCompany = async (req, res) => {
-  const { companyId } = req.params;
-
   try {
+    const { companyId } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    // Pull search/filter params from query string
+    const { search, location, status, staff, dateRange } = req.query;
+
+    // Build dynamic WHERE clauses and values array
+    let whereConditions = ['c.company_id = $1', 'c.is_deleted = false'];
+    const values = [companyId];
+    let paramIndex = 2;
+
+    // Search condition
+    if (search) {
+      whereConditions.push(`(
+        c.name ILIKE $${paramIndex} OR
+        c.email ILIKE $${paramIndex} OR
+        c.phone_number ILIKE $${paramIndex} OR
+        c.account_number ILIKE $${paramIndex}
+      )`);
+      values.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    // Location filter
+    if (location && location !== 'all') {
+      whereConditions.push(`c.location = $${paramIndex}`);
+      values.push(location);
+      paramIndex++;
+    }
+
+    // Status filter
+    if (status && status !== 'all') {
+      whereConditions.push(`c.status = $${paramIndex}`);
+      values.push(status);
+      paramIndex++;
+    }
+
+    // Staff filter
+    if (staff && staff !== 'all') {
+      whereConditions.push(`s.full_name = $${paramIndex}`);
+      values.push(staff);
+      paramIndex++;
+    }
+
+    // Date range filter
+    if (dateRange && dateRange !== 'all') {
+      const fromDate = getDateFromRange(dateRange);
+      if (fromDate) {
+        whereConditions.push(`c.date_of_registration >= $${paramIndex}`);
+        values.push(fromDate.toISOString());
+        paramIndex++;
+      }
+    }
+
+    // Build WHERE clause
+    const whereClause = whereConditions.length > 0 
+      ? 'WHERE ' + whereConditions.join(' AND ')
+      : '';
+
+    // Determine if this is a search operation
+    const isSearching = !!(search || (location && location !== 'all') || 
+                          (status && status !== 'all') || (staff && staff !== 'all') || 
+                          (dateRange && dateRange !== 'all'));
+
+    // Get total count first (with exact same conditions)
+    const countQuery = `
+      SELECT COUNT(DISTINCT c.id) as total
+      FROM customers c
+      JOIN staff s ON c.registered_by = s.id
+      ${whereClause}
+    `;
+
+    const countResult = await pool.query(countQuery, values);
+    const total = parseInt(countResult.rows[0].total, 10);
+
+    // Build main query with pagination
+    let mainQuery = `
+      SELECT
+        c.id AS customer_id,
+        c.name,
+        c.phone_number,
+        c.account_number,
+        c.momo_number,
+        c.email,
+        c.location,
+        c.daily_rate,
+        c.next_of_kin,
+        c.id_card,
+        c.city,
+        c.registered_by,
+        c.date_of_birth,
+        c.withdrawal_code,
+        c.is_deleted,
+        c.gender,
+        c.status,
+        c.date_of_registration,
+        s.full_name AS registered_by_name,
+        COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0) AS total_balance_across_all_accounts,
+        COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'account_id', a.id,
+              'account_type', a.account_type,
+              'balance', a.balance,
+              'created_at', a.created_at
+            )
+            ORDER BY a.created_at
+          ) FILTER (WHERE a.id IS NOT NULL),
+          '[]'
+        ) AS accounts
+      FROM customers c
+      JOIN staff s ON c.registered_by = s.id
+      LEFT JOIN accounts a ON c.id = a.customer_id
+      ${whereClause}
+      GROUP BY c.id, s.full_name
+      ORDER BY c.name
+    `;
+
+    // Add pagination only if not searching
+    const queryValues = [...values];
+    if (!isSearching) {
+      mainQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      queryValues.push(limit, offset);
+    }
+
+    // Execute main query
     const result = await pool.query({
-      text: `
-  SELECT
-    c.id AS customer_id,
-    c.name,
-    c.phone_number,
-    c.account_number,
-    c.momo_number,
-    c.email,
-    c.location,
-    c.daily_rate,
-    c.next_of_kin,
-    c.id_card,
-    c.city,
-    c.registered_by,
-    c.date_of_birth,
-    c.withdrawal_code,
-    c.is_deleted,
-    c.gender,
-    c.status,
-    c.date_of_registration,
-    s.full_name AS registered_by_name,
-
-    -- Customer Summary across all NON-LOAN accounts
-    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0) AS total_balance_across_all_accounts,
-    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN total_deposits_customer.sum_deposits ELSE 0 END), 0) AS total_deposits_across_all_accounts,
-    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN total_withdrawals_customer.sum_withdrawals ELSE 0 END), 0) AS total_withdrawals_across_all_accounts,
-    COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN total_stakes_customer.sum_stakes ELSE 0 END), 0) AS total_stakes_across_all_accounts,
-
-    -- Nested accounts (includes all types, but you can filter on frontend if needed)
-    COALESCE(
-      JSON_AGG(
-        JSON_BUILD_OBJECT(
-          'account_id', a.id,
-          'account_type', a.account_type,
-          'balance', a.balance,
-          'created_at', a.created_at,
-          'total_stakes', COALESCE(stake_summary.total_stakes, 0),
-          'total_deposits', COALESCE(dep_with.total_deposits, 0),
-          'total_withdrawals', COALESCE(dep_with.total_withdrawals, 0)
-        )
-        ORDER BY a.created_at
-      ) FILTER (WHERE a.id IS NOT NULL),
-      '[]'
-    ) AS accounts
-
-  FROM customers c
-  JOIN staff s ON c.registered_by = s.id
-  LEFT JOIN accounts a ON c.id = a.customer_id
-
-  -- Subquery for total stakes per account
-  LEFT JOIN (
-    SELECT account_id, COUNT(id) AS total_stakes
-    FROM stakes
-    GROUP BY account_id
-  ) stake_summary ON a.id = stake_summary.account_id
-
-  -- Subquery for total deposits/withdrawals per account
-  LEFT JOIN (
-    SELECT
-      account_id,
-      SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END) AS total_deposits,
-      SUM(CASE WHEN type = 'withdrawal' THEN amount ELSE 0 END) AS total_withdrawals
-    FROM transactions
-    GROUP BY account_id
-  ) dep_with ON a.id = dep_with.account_id
-
-  -- Total deposits across all accounts (exclude loans)
-  LEFT JOIN (
-    SELECT
-        a_inner.customer_id,
-        SUM(CASE WHEN t_inner.type = 'deposit' THEN t_inner.amount ELSE 0 END) AS sum_deposits
-    FROM accounts a_inner
-    JOIN transactions t_inner ON a_inner.id = t_inner.account_id
-    WHERE a_inner.account_type NOT ILIKE '%loan%'
-    GROUP BY a_inner.customer_id
-  ) AS total_deposits_customer ON c.id = total_deposits_customer.customer_id
-
-  -- Total withdrawals across all accounts (exclude loans)
-  LEFT JOIN (
-      SELECT
-          a_inner.customer_id,
-          SUM(CASE WHEN t_inner.type = 'withdrawal' THEN t_inner.amount ELSE 0 END) AS sum_withdrawals
-      FROM accounts a_inner
-      JOIN transactions t_inner ON a_inner.id = t_inner.account_id
-      WHERE a_inner.account_type NOT ILIKE '%loan%'
-      GROUP BY a_inner.customer_id
-  ) AS total_withdrawals_customer ON c.id = total_withdrawals_customer.customer_id
-
-  -- Total stakes across all accounts (exclude loans)
-  LEFT JOIN (
-      SELECT
-          a_inner.customer_id,
-          COUNT(s_inner.id) AS sum_stakes
-      FROM accounts a_inner
-      JOIN stakes s_inner ON a_inner.id = s_inner.account_id
-      WHERE a_inner.account_type NOT ILIKE '%loan%'
-      GROUP BY a_inner.customer_id
-  ) AS total_stakes_customer ON c.id = total_stakes_customer.customer_id
-
-  WHERE c.company_id = $1 AND c.is_deleted = false
-  GROUP BY
-    c.id,
-    c.name,
-    c.phone_number,
-    c.email,
-    c.location,
-    c.date_of_registration,
-    s.full_name,
-    total_deposits_customer.sum_deposits,
-    total_withdrawals_customer.sum_withdrawals,
-    total_stakes_customer.sum_stakes
-  ORDER BY c.name;
-`
-,
-      values: [companyId],
+      text: mainQuery,
+      values: queryValues,
       statement_timeout: 120000
     });
 
+    // Calculate response metadata
+    const responsePage = isSearching ? 1 : page;
+    const responseLimit = isSearching ? total : limit;
+    const totalPages = isSearching ? 1 : Math.ceil(total / limit);
+
     return res.status(200).json({
       status: 'success',
-      count: result.rows.length,
+      page: responsePage,
+      limit: responseLimit,
+      total,
+      totalPages,
+      isSearching,
       data: result.rows,
     });
 
   } catch (error) {
-    console.error('Error fetching customers by company:', error.message);
-    return res.status(500).json({
-      status: 'error',
+    console.error('Error fetching customers:', error.message);
+    return res.status(500).json({ 
+      status: 'error', 
       message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
+
+// Helper function to calculate date ranges
+function getDateFromRange(dateRange) {
+  const now = new Date();
+  switch (dateRange) {
+    case 'last_week':
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    case 'last_month':
+      return new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    case 'last_3_months':
+      return new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+    case 'this_year':
+      return new Date(now.getFullYear(), 0, 1);
+    default:
+      return null;
+  }
+}
 
 export const udpateCustomerInfoMobile = async (req, res) => {
   const {
@@ -451,5 +490,114 @@ export const updateCustomer = async (req, res) => {
   } catch (error) {
     console.error("Error updating customer:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export const getCustomerByAccountNumber = async (req, res) => {
+  const { accountNumber } = req.params;
+  console.log(accountNumber)
+
+  try {
+    // Extract first 11 characters (customer number)
+    // const customerNumber = accountNumber.slice(0, 11);
+
+    const query = `
+      SELECT c.*
+      FROM accounts a
+      JOIN customers c ON a.customer_id = c.id
+      WHERE a.account_number = $1;
+    `;
+
+    const { rows } = await pool.query(query, [accountNumber]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Customer not found",
+      });
+    }
+    console.log(rows[0])
+
+    res.status(200).json({
+      success: true,
+      data: rows[0],
+    });
+
+  } catch (error) {
+    console.error("Error fetching customer:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+export const loginCustomer = async (req, res) => {
+  const { account_number, withdrawal_code } = req.body;
+
+  if (!account_number || !withdrawal_code) {
+    return res.status(400).json({ message: "Missing credentials" });
+  }
+
+  try {
+    // 1️⃣ Get customer
+    const customerQuery = `
+      SELECT * FROM customers
+      WHERE account_number = $1
+      AND withdrawal_code = $2
+      LIMIT 1;
+    `;
+
+    const { rows: customerRows } = await pool.query(customerQuery, [
+      account_number,
+      withdrawal_code,
+    ]);
+
+    if (customerRows.length === 0) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const customer = customerRows[0];
+
+    // 2️⃣ Get accounts
+    const accountsQuery = `
+      SELECT * FROM accounts
+      WHERE customer_id = $1;
+    `;
+
+    const { rows: accounts } = await pool.query(accountsQuery, [
+      customer.id,
+    ]);
+
+    // 3️⃣ Get transactions for all customer accounts
+    const accountIds = accounts.map(acc => acc.id);
+    console.log(accountIds);
+    let transactions = [];
+
+    if (accountIds.length > 0) {
+      const transactionsQuery = `
+        SELECT *
+        FROM transactions
+        WHERE account_id = ANY($1)
+        ORDER BY created_at DESC
+        LIMIT 50;
+      `;
+
+      const { rows } = await pool.query(transactionsQuery, [
+        accountIds,
+      ]);
+
+      transactions = rows;
+    }
+
+    return res.json({
+      customer,
+      accounts,
+      transactions,
+    });
+
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
