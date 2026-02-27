@@ -208,7 +208,6 @@ export const getCustomersByCompany = async (req, res) => {
     let whereConditions = ['c.company_id = $1', 'c.is_deleted = false'];
     const values = [companyId];
     let paramIndex = 2;
-    console.log(search)
     // Search condition
     if (search) {
       whereConditions.push(`(
@@ -606,7 +605,6 @@ export const searchCustomers = async (req, res) => {
   const { companyId } = req.params;
   const { query } = req.query;
 
-  console.log(query);
   if (!query || query.trim() === "") {
     return res.status(200).json({
       status: "success",
@@ -617,45 +615,55 @@ export const searchCustomers = async (req, res) => {
   try {
     const result = await pool.query(
       `
-     SELECT 
-  c.id,
-  c.name,
-  c.phone_number,
-  c.email,
-  c.account_number,
-  c.daily_rate,
+      SELECT 
+        c.id,
+        c.name,
+        c.phone_number,
+        c.email,
+        c.account_number,
+        c.daily_rate,
 
-  COALESCE(
-    SUM(
-      CASE 
-        WHEN a.account_type NOT ILIKE '%loan%' 
-        THEN a.balance 
-        ELSE 0 
-          END
-        ), 
-        0
-      ) AS total_balance_across_all_accounts
+        -- Staff Info
+        s.id AS registered_by,
+        s.full_name AS registered_by_name,
 
-    FROM customers c
+        -- Total Balance (Exclude Loan Accounts)
+        COALESCE(
+          SUM(
+            CASE 
+              WHEN a.account_type NOT ILIKE '%loan%' 
+              THEN a.balance 
+              ELSE 0 
+            END
+          ),
+          0
+        ) AS total_balance_across_all_accounts
 
-    LEFT JOIN accounts a 
-      ON c.id = a.customer_id
+      FROM customers c
 
-    WHERE 
-      c.company_id = $1
-      AND c.is_deleted = false
-      AND (
-        c.name ILIKE $2 OR
-        c.phone_number ILIKE $2 OR
-        c.email ILIKE $2 OR
-        c.account_number ILIKE $2
-      )
+      LEFT JOIN accounts a 
+        ON c.id = a.customer_id
 
-    GROUP BY 
-      c.id
+      LEFT JOIN staff s
+        ON c.registered_by = s.id
 
-    ORDER BY c.name
-    LIMIT 10;
+      WHERE 
+        c.company_id = $1
+        AND c.is_deleted = false
+        AND (
+          c.name ILIKE $2 OR
+          c.phone_number ILIKE $2 OR
+          c.email ILIKE $2 OR
+          c.account_number ILIKE $2
+        )
+
+      GROUP BY 
+        c.id,
+        s.id,
+        s.full_name
+
+      ORDER BY c.name
+      LIMIT 10;
       `,
       [companyId, `%${query}%`]
     );
