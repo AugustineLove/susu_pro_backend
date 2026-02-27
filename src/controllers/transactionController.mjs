@@ -150,78 +150,189 @@ export const getCompanyTransactions = async (req, res) => {
     });
   }
 };
-
 export const getRecentTransactions = async (req, res) => {
   try {
     const { company_id } = req.params;
 
-    const result = await pool.query({ text: `
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    // Filters
+    const { search, type, status, staff, startDate, endDate } = req.query;
+
+    let whereConditions = ["t.company_id = $1", "t.type != 'withdrawal'" ];
+    const values = [company_id];
+    let paramIndex = 2;
+
+    // 🔎 Search
+    if (search) {
+      whereConditions.push(`(
+        c.name ILIKE $${paramIndex} OR
+        c.phone_number ILIKE $${paramIndex} OR
+        t.unique_code ILIKE $${paramIndex} OR
+        a.account_number ILIKE $${paramIndex}
+      )`);
+      values.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    // 💰 Type
+    if (type && type !== "all") {
+      whereConditions.push(`t.type = $${paramIndex}`);
+      values.push(type);
+      paramIndex++;
+    }
+
+    // 📌 Status
+    if (status && status !== "all") {
+      whereConditions.push(`t.status = $${paramIndex}`);
+      values.push(status);
+      paramIndex++;
+    }
+
+    // 👤 Staff
+    if (staff && staff !== "all") {
+      whereConditions.push(`rs.id = $${paramIndex}`);
+      values.push(staff);
+      paramIndex++;
+    }
+
+    // 📅 Date filtering using startDate & endDate
+    if (startDate && endDate) {
+      whereConditions.push(`t.transaction_date BETWEEN $${paramIndex} AND $${paramIndex + 1}`);
+      values.push(formatStartDate(startDate), formatEndDate(endDate));
+      paramIndex += 2;
+    } else if (startDate) {
+      whereConditions.push(`t.transaction_date >= $${paramIndex}`);
+      values.push(formatStartDate(startDate));
+      paramIndex++;
+    } else if (endDate) {
+      whereConditions.push(`t.transaction_date <= $${paramIndex}`);
+      values.push(formatEndDate(endDate));
+      paramIndex++;
+    }
+
+    const whereClause =
+      whereConditions.length > 0
+        ? "WHERE " + whereConditions.join(" AND ")
+        : "";
+
+    // Determine if searching/filtering
+    const isSearching = !!(
+      search ||
+      (type && type !== "all") ||
+      (status && status !== "all") ||
+      (staff && staff !== "all") ||
+      startDate ||
+      endDate
+    );
+
+    // ---------------- COUNT QUERY ----------------
+    const countQuery = `
+      SELECT COUNT(DISTINCT t.id) as total
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
+      JOIN customers c ON a.customer_id = c.id
+      LEFT JOIN staff rs ON t.staff_id = rs.id
+      ${whereClause}
+    `;
+
+    const countResult = await pool.query(countQuery, values);
+    const total = parseInt(countResult.rows[0].total, 10);
+
+    // ---------------- MAIN QUERY ----------------
+    let mainQuery = `
       SELECT 
-  t.id AS transaction_id,
-  t.amount,
-  t.type,
-  t.description,
-  t.status,
-  t.unique_code,
-  t.transaction_date,
-  t.reversed_at,
-  t.reversal_reason,
-  t.reversed_by,
-  t.is_deleted,
-  t.withdrawal_type,
+        t.id AS transaction_id,
+        t.amount,
+        t.type,
+        t.description,
+        t.status,
+        t.unique_code,
+        t.transaction_date,
+        t.reversed_at,
+        t.reversal_reason,
+        t.reversed_by,
+        t.is_deleted,
+        t.withdrawal_type,
 
-  a.id AS account_id,
-  a.customer_id AS customer_id,
-  a.account_type AS account_type,
-  a.account_number AS account_number,
+        a.id AS account_id,
+        a.customer_id,
+        a.account_type,
+        a.account_number,
 
-  c.name AS customer_name,
-  c.phone_number AS customer_phone,
-  c.account_number AS customer_account_number,
+        c.name AS customer_name,
+        c.phone_number AS customer_phone,
+        c.account_number AS customer_account_number,
 
-  -- Mobile Banker (created_by)
-  mb.id AS mobile_banker_id,
-  mb.full_name AS mobile_banker_name,
+        mb.id AS mobile_banker_id,
+        mb.full_name AS mobile_banker_name,
 
-  -- Recording Staff (staff_id)
-  rs.id AS recorded_staff_id,
-  rs.full_name AS recorded_staff_name,
+        rs.id AS recorded_staff_id,
+        rs.full_name AS recorded_staff_name,
 
-  str.full_name AS reversed_by_name
+        str.full_name AS reversed_by_name
 
-FROM transactions t
+      FROM transactions t
+      LEFT JOIN staff str ON t.reversed_by = str.id
+      LEFT JOIN staff mb ON t.created_by = mb.id
+      LEFT JOIN staff rs ON t.staff_id = rs.id
+      JOIN accounts a ON t.account_id = a.id
+      JOIN customers c ON a.customer_id = c.id
+      ${whereClause}
+      ORDER BY t.transaction_date DESC
+    `;
 
-LEFT JOIN staff str
-  ON t.reversed_by = str.id
+    const queryValues = [...values];
 
--- Mobile banker who created it
-LEFT JOIN staff mb 
-  ON t.created_by = mb.id
+    // Pagination only if NOT searching
+    if (!isSearching) {
+      mainQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      queryValues.push(limit, offset);
+    }
 
--- Staff who recorded / approved it
-LEFT JOIN staff rs 
-  ON t.staff_id = rs.id
+    const result = await pool.query({
+      text: mainQuery,
+      values: queryValues,
+      statement_timeout: 120000,
+    });
 
-JOIN accounts a 
-  ON t.account_id = a.id
+    const responsePage = isSearching ? 1 : page;
+    const responseLimit = isSearching ? total : limit;
+    const totalPages = isSearching ? 1 : Math.ceil(total / limit);
 
-JOIN customers c 
-  ON a.customer_id = c.id
-
-WHERE 
-  t.company_id = $1 
-
-ORDER BY 
-  t.transaction_date DESC;
-
-    `, values: [company_id], statement_timeout: 120000});
-    // console.log(result.rows);
-    res.status(200).json({ status: 'success', data: result.rows });
+    res.status(200).json({
+      status: "success",
+      page: responsePage,
+      limit: responseLimit,
+      total,
+      totalPages,
+      isSearching,
+      data: result.rows,
+    });
 
   } catch (error) {
-    console.error('Error fetching recent transactions:', error);
-    res.status(500).json({ status: 'error', message: 'Failed to fetch transactions' });
+    console.error("Error fetching recent transactions:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Failed to fetch transactions",
+    });
   }
+};
+
+// Format start date to beginning of the day
+const formatStartDate = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+};
+
+// Format end date to end of the day
+const formatEndDate = (date) => {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d.toISOString();
 };
 
 export const approveTransaction = async (req, res) => {

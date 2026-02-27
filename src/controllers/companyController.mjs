@@ -74,51 +74,167 @@ export const getAllCompanies = async (req, res) => {
 
 export const getCompanyStats = async (req, res) => {
   try {
-    const companyId = req.user.type === 'staff' ? req.user.companyId : req.user.id;
-    console.log('Fetching stats for company ID:', companyId);
-const customerQuery = 'SELECT COUNT(*) FROM customers WHERE company_id = $1 AND is_deleted = false';
-const transactionQuery = 'SELECT COUNT(*) FROM transactions WHERE company_id = $1';
-const balanceQuery = `SELECT COALESCE(SUM(balance), 0) AS total_balance
-FROM accounts
-WHERE company_id = $1
-  AND account_type IN ('savings', 'susu', 'Susu', 'Savings')
-  AND is_deleted = false;
-`;
-const commissionQuery = `SELECT 
-  COALESCE(SUM(amount), 0) AS total_commissions 
-FROM commissions 
-WHERE company_id = $1
-  AND (status IS NULL OR status <> 'reversed');
-`;
+    const companyId =
+      req.user.type === "staff" ? req.user.companyId : req.user.id;
 
-const [
-  { rows: customers },
-  { rows: transactions },
-  { rows: balances },
-  { rows: commissions }
-] = await Promise.all([
-  pool.query(customerQuery, [companyId]),
-  pool.query(transactionQuery, [companyId]),
-  pool.query(balanceQuery, [companyId]),
-  pool.query(commissionQuery, [companyId])
-]);
+    // ---------------------------
+    // 1️⃣ Customers count
+    // ---------------------------
+    const customerQuery = `
+      SELECT COUNT(*) 
+      FROM customers 
+      WHERE company_id = $1 
+        AND is_deleted = false
+    `;
 
-res.json({
-  status: 'success',
-  data: {
-    totalCustomers: parseInt(customers[0].count),
-    totalTransactions: parseInt(transactions[0].count),
-    totalBalance: parseFloat(balances[0].total_balance),
-    totalCommissions: parseFloat(commissions[0].total_commissions)
-  }
-});
+    // ---------------------------
+    // 2️⃣ Transactions count
+    // ---------------------------
+    const transactionCountQuery = `
+      SELECT COUNT(*) 
+      FROM transactions 
+      WHERE company_id = $1
+        AND is_deleted = false
+    `;
+
+    // ---------------------------
+    // 3️⃣ Account Balance (Savings / Susu only)
+    // ---------------------------
+    const balanceQuery = `
+      SELECT COALESCE(SUM(balance), 0) AS total_balance
+      FROM accounts
+      WHERE company_id = $1
+        AND account_type NOT ILIKE '%loan%'
+        AND is_deleted = false
+    `;
+
+    // ---------------------------
+    // 4️⃣ Transaction Totals (Deposits & Withdrawals)
+    // ---------------------------
+    const totalsQuery = `
+      SELECT
+
+        -- Deposits
+        COALESCE(SUM(
+          CASE 
+            WHEN type = 'deposit'
+              AND status <> 'reversed'
+              AND is_deleted = false
+            THEN amount ELSE 0
+          END
+        ), 0) AS total_deposits,
+
+        COALESCE(SUM(
+          CASE 
+            WHEN type = 'deposit'
+              AND status = 'approved'
+              AND is_deleted = false
+            THEN amount ELSE 0
+          END
+        ), 0) AS total_approved_deposits,
+
+        COALESCE(SUM(
+          CASE 
+            WHEN type = 'deposit'
+              AND status = 'pending'
+              AND is_deleted = false
+            THEN amount ELSE 0
+          END
+        ), 0) AS total_pending_deposits,
+
+
+        -- Withdrawals
+        COALESCE(SUM(
+          CASE 
+            WHEN type = 'withdrawal'
+              AND status <> 'reversed'
+              AND is_deleted = false
+            THEN amount ELSE 0
+          END
+        ), 0) AS total_withdrawals,
+
+        COALESCE(SUM(
+          CASE 
+            WHEN type = 'withdrawal'
+              AND status = 'approved'
+              AND is_deleted = false
+            THEN amount ELSE 0
+          END
+        ), 0) AS total_approved_withdrawals,
+
+        COALESCE(SUM(
+          CASE 
+            WHEN type = 'withdrawal'
+              AND status = 'pending'
+              AND is_deleted = false
+            THEN amount ELSE 0
+          END
+        ), 0) AS total_pending_withdrawals
+
+
+      FROM transactions
+      WHERE company_id = $1
+    `;
+
+    // ---------------------------
+    // 5️⃣ Commissions
+    // ---------------------------
+    const commissionQuery = `
+      SELECT 
+        COALESCE(SUM(amount), 0) AS total_commissions
+      FROM commissions
+      WHERE company_id = $1
+        AND (status IS NULL OR status <> 'reversed')
+    `;
+
+    // ---------------------------
+    // Execute all in parallel
+    // ---------------------------
+    const [
+      { rows: customers },
+      { rows: transactions },
+      { rows: balances },
+      { rows: totals },
+      { rows: commissions }
+    ] = await Promise.all([
+      pool.query(customerQuery, [companyId]),
+      pool.query(transactionCountQuery, [companyId]),
+      pool.query(balanceQuery, [companyId]),
+      pool.query(totalsQuery, [companyId]),
+      pool.query(commissionQuery, [companyId])
+    ]);
+
+    // ---------------------------
+    // Response
+    // ---------------------------
+    res.json({
+      status: "success",
+      data: {
+        totalCustomers: parseInt(customers[0].count, 10),
+        totalTransactions: parseInt(transactions[0].count, 10),
+
+        totalBalance: parseFloat(balances[0].total_balance),
+
+        totalDeposits: parseFloat(totals[0].total_deposits),
+        totalApprovedDeposits: parseFloat(totals[0].total_approved_deposits),
+        totalPendingDeposits: parseFloat(totals[0].total_pending_deposits),
+
+        totalWithdrawals: parseFloat(totals[0].total_withdrawals),
+        totalApprovedWithdrawals: parseFloat(totals[0].total_approved_withdrawals),
+        totalPendingWithdrawals: parseFloat(totals[0].total_pending_withdrawals),
+
+        totalCommissions: parseFloat(commissions[0].total_commissions)
+      }
+    });
 
   } catch (error) {
-    console.error('Dashboard error:', error);
-    res.status(500).json({ status: 'error', message: 'Internal server error' });
+    console.error("Dashboard error:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Internal server error"
+    });
   }
 };
-
 export const updateProfile = async (req, res) => {
   const {
     id,         // or email if you want to use that as identifier

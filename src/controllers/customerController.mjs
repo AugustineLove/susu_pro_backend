@@ -208,7 +208,7 @@ export const getCustomersByCompany = async (req, res) => {
     let whereConditions = ['c.company_id = $1', 'c.is_deleted = false'];
     const values = [companyId];
     let paramIndex = 2;
-
+    console.log(search)
     // Search condition
     if (search) {
       whereConditions.push(`(
@@ -599,5 +599,77 @@ export const loginCustomer = async (req, res) => {
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const searchCustomers = async (req, res) => {
+  const { companyId } = req.params;
+  const { query } = req.query;
+
+  console.log(query);
+  if (!query || query.trim() === "") {
+    return res.status(200).json({
+      status: "success",
+      data: [],
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+     SELECT 
+  c.id,
+  c.name,
+  c.phone_number,
+  c.email,
+  c.account_number,
+  c.daily_rate,
+
+  COALESCE(
+    SUM(
+      CASE 
+        WHEN a.account_type NOT ILIKE '%loan%' 
+        THEN a.balance 
+        ELSE 0 
+          END
+        ), 
+        0
+      ) AS total_balance_across_all_accounts
+
+    FROM customers c
+
+    LEFT JOIN accounts a 
+      ON c.id = a.customer_id
+
+    WHERE 
+      c.company_id = $1
+      AND c.is_deleted = false
+      AND (
+        c.name ILIKE $2 OR
+        c.phone_number ILIKE $2 OR
+        c.email ILIKE $2 OR
+        c.account_number ILIKE $2
+      )
+
+    GROUP BY 
+      c.id
+
+    ORDER BY c.name
+    LIMIT 10;
+      `,
+      [companyId, `%${query}%`]
+    );
+
+    return res.status(200).json({
+      status: "success",
+      data: result.rows,
+    });
+
+  } catch (error) {
+    console.error("Search error:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+    });
   }
 };
