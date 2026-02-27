@@ -622,6 +622,7 @@ export const searchCustomers = async (req, res) => {
         c.email,
         c.account_number,
         c.daily_rate,
+        c.id as customer_id,
 
         -- Staff Info
         s.id AS registered_by,
