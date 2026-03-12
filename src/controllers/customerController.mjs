@@ -214,7 +214,8 @@ export const getCustomersByCompany = async (req, res) => {
         c.name ILIKE $${paramIndex} OR
         c.email ILIKE $${paramIndex} OR
         c.phone_number ILIKE $${paramIndex} OR
-        c.account_number ILIKE $${paramIndex}
+        c.account_number ILIKE $${paramIndex} OR
+        c.location ILIKE $${paramIndex}
       )`);
       values.push(`%${search}%`);
       paramIndex++;
