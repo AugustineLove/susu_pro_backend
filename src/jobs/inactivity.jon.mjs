@@ -9,7 +9,7 @@ cron.schedule("0 2 * * *", async () => {
   try {
     await client.query("BEGIN");
 
-    /* 1️⃣ Inactivate stale accounts */
+    /* 1️⃣ Inactivate stale accounts (30 days no activity) */
     await client.query(`
       UPDATE accounts
       SET status = 'Inactive',
@@ -19,28 +19,31 @@ cron.schedule("0 2 * * *", async () => {
         AND last_activity_at < NOW() - INTERVAL '30 days'
     `);
 
-    /* 2️⃣ Inactivate customers with no active accounts */
+    /* 2️⃣ Immediately inactivate customers with NO active accounts */
     await client.query(`
       UPDATE customers c
       SET status = 'Inactive'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM accounts a
+      WHERE c.status = 'Active'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM accounts a
         WHERE a.customer_id = c.id
-          AND a.status = 'Active'
-      )
-      AND EXISTS (
-        SELECT 1 FROM accounts a
-        WHERE a.customer_id = c.id
-          AND a.inactive_at <= NOW() - INTERVAL '20 days'
+        AND a.status = 'Active'
       )
     `);
 
     await client.query("COMMIT");
+
     console.log("✅ Inactivity cron completed");
+
   } catch (err) {
+
     await client.query("ROLLBACK");
     console.error("❌ Inactivity cron failed:", err);
+
   } finally {
+
     client.release();
+
   }
 });
