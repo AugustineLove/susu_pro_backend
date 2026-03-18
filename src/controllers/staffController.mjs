@@ -412,3 +412,77 @@ export const getStaffDashboardByCompany = async (req, res) => {
     });
   }
 };
+
+export const updateStaffPermissions = async (req, res) => {
+  const { id } = req.params;
+  const { permissions } = req.body;
+
+  console.log("Staff ID:", id);
+  console.log("Permissions:", permissions);
+
+  try {
+    // Update permissions (JSON field)
+    const updatedStaff = await pool.query(
+      `UPDATE staff
+       SET permissions = $1
+       WHERE id = $2
+       RETURNING *`,
+      [permissions, id]
+    );
+
+    if (updatedStaff.rows.length === 0) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Staff not found',
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Permissions updated successfully',
+      data: updatedStaff.rows[0],
+    });
+
+  } catch (error) {
+    console.error('Error updating staff permissions:', error.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  }
+};
+
+export const deleteStaff = async (req, res) => {
+  const { id } = req.params;
+
+  console.log("Deleting staff with ID:", id);
+
+  try {
+    const deletedStaff = await pool.query(
+      `DELETE FROM staff
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    if (deletedStaff.rows.length === 0) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Staff not found',
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Staff deleted successfully',
+      data: deletedStaff.rows[0],
+    });
+
+  } catch (error) {
+    console.error('Error deleting staff:', error.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  }
+};
