@@ -322,14 +322,14 @@ export const getRecentTransactions = async (req, res) => {
 };
 
 // Format start date to beginning of the day
-const formatStartDate = (date) => {
+export const formatStartDate = (date) => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   return d.toISOString();
 };
 
 // Format end date to end of the day
-const formatEndDate = (date) => {
+export const formatEndDate = (date) => {
   const d = new Date(date);
   d.setHours(23, 59, 59, 999);
   return d.toISOString();

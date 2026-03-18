@@ -1,6 +1,7 @@
 import pool from '../db.mjs';
 import { generateWithdrawalCode } from '../utils/withdrawalCode.mjs';
 import { sendCustomerMessageBackend } from './smsController.mjs';
+import { formatEndDate, formatStartDate } from './transactionController.mjs';
 
 export const createCustomer = async (req, res) => {
   const {
@@ -200,10 +201,11 @@ export const getCustomersByCompany = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
-
+    console.log(page);
     // Pull search/filter params from query string
-    const { search, location, status, staff, dateRange } = req.query;
+    const { search, location, status, staff, dateRange, startDate, endDate } = req.query;
 
+    console.log(startDate, endDate, location, search)
     // Build dynamic WHERE clauses and values array
     let whereConditions = ['c.company_id = $1', 'c.is_deleted = false'];
     const values = [companyId];
@@ -244,11 +246,17 @@ export const getCustomersByCompany = async (req, res) => {
 
     // Date range filter
     if (dateRange && dateRange !== 'all') {
-      const fromDate = getDateFromRange(dateRange);
-      if (fromDate) {
-        whereConditions.push(`c.date_of_registration >= $${paramIndex}`);
-        values.push(fromDate.toISOString());
-        paramIndex++;
+      if(dateRange === 'custom' && startDate && endDate){
+        whereConditions.push(`c.date_of_registration BETWEEN $${paramIndex} AND $${ paramIndex+ 1}`)
+        values.push(formatStartDate(startDate), formatEndDate(endDate));
+        paramIndex += 2;
+      } else {
+        const fromDate = getDateFromRange(dateRange);
+        if (fromDate) {
+          whereConditions.push(`c.date_of_registration >= $${paramIndex}`);
+          values.push(fromDate.toISOString());
+          paramIndex++;
+        }
       }
     }
 
