@@ -277,21 +277,38 @@ const getClientsReport = async (companyId, dateFilter) => {
   // Clients by activity (contribution frequency in range)
   const clientActivity = await pool.query(
     `SELECT
-      c.id,
-      c.name,
-      c.phone_number,
-      c.email,
-      c.status,
-      c.date_of_registration,
-      COUNT(t.id) AS transaction_count,
-      COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0) AS total_deposits,
-      COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS total_withdrawals,
-      COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0) AS current_balance
+    c.id,
+    c.name,
+    c.phone_number,
+    c.email,
+    c.status,
+    c.date_of_registration,
+    COALESCE(tx.transaction_count, 0) AS transaction_count,
+    COALESCE(tx.total_deposits, 0) AS total_deposits,
+    COALESCE(tx.total_withdrawals, 0) AS total_withdrawals,
+    COALESCE(ab.current_balance, 0) AS current_balance
     FROM customers c
-    LEFT JOIN accounts a ON c.id = a.customer_id
-    LEFT JOIN transactions t ON t.account_id = a.id AND t.is_deleted = false ${txDateWhere}  -- join via account
+    -- Aggregate balances separately
+    LEFT JOIN (
+        SELECT 
+            customer_id,
+            SUM(CASE WHEN account_type NOT ILIKE '%loan%' THEN balance ELSE 0 END) AS current_balance
+        FROM accounts
+        GROUP BY customer_id
+    ) ab ON c.id = ab.customer_id
+    -- Aggregate transactions separately
+    LEFT JOIN (
+        SELECT 
+            a.customer_id,
+            COUNT(t.id) AS transaction_count,
+            SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END) AS total_deposits,
+            SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END) AS total_withdrawals
+        FROM transactions t
+        JOIN accounts a ON t.account_id = a.id
+        WHERE t.is_deleted = false ${txDateWhere}
+        GROUP BY a.customer_id
+    ) tx ON c.id = tx.customer_id
     WHERE c.company_id = $1 AND c.is_deleted = false
-    GROUP BY c.id, c.name, c.phone_number, c.email, c.status, c.date_of_registration
     ORDER BY total_deposits DESC
     LIMIT 20`,
     [companyId, ...txValues]
@@ -349,17 +366,17 @@ const getFinancialReport = async (companyId, dateFilter) => {
 
   // Account balances overview
   const accountBalances = await pool.query(
-    `SELECT
-       a.account_type,
-       COUNT(*) AS account_count,
-       COALESCE(SUM(a.balance), 0) AS total_balance
-     FROM accounts a
-     JOIN customers c ON a.customer_id = c.id
-     WHERE c.company_id = $1 AND c.is_deleted = false
-     GROUP BY a.account_type
-     ORDER BY total_balance DESC`,
-    [companyId]
-  );
+  `SELECT
+     LOWER(a.account_type) AS account_type,
+     COUNT(*) AS account_count,
+     COALESCE(SUM(a.balance), 0) AS total_balance
+      FROM accounts a
+      JOIN customers c ON a.customer_id = c.id
+      WHERE c.company_id = $1 AND c.is_deleted = false
+      GROUP BY LOWER(a.account_type)
+      ORDER BY total_balance DESC`,
+      [companyId]
+    );
 
   // Monthly net flow
   const monthlyFlow = await pool.query(
@@ -395,14 +412,14 @@ const getFinancialReport = async (companyId, dateFilter) => {
     t.status,
     t.transaction_date,
     c.name AS customer_name
-FROM transactions t
-LEFT JOIN accounts a ON t.account_id = a.id           -- join via account
-LEFT JOIN customers c ON a.customer_id = c.id        -- then get customer info
-WHERE t.company_id = $1
-  AND t.is_deleted = false
-  ${dateWhere}   -- optional date filter
-ORDER BY t.amount DESC
-LIMIT 10`,
+    FROM transactions t
+    LEFT JOIN accounts a ON t.account_id = a.id           -- join via account
+    LEFT JOIN customers c ON a.customer_id = c.id        -- then get customer info
+    WHERE t.company_id = $1
+      AND t.is_deleted = false
+      ${dateWhere}   -- optional date filter
+    ORDER BY t.amount DESC
+    LIMIT 10`,
     [companyId, ...values]
   );
 
