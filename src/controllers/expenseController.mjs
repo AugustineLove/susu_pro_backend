@@ -151,12 +151,27 @@ export const recordEntry = async (req, res) => {
           );
         }
       } else {
-        await client.query(
+        const { rows } = await client.query(
           `
           INSERT INTO budgets (company_id, date, allocated, spent, status)
           VALUES ($1, $2, 0, $3, 'Active');
           `,
           [company_id, today, expenseAmount]
+        );
+
+          await client.query(
+          `
+          INSERT INTO float_movements (
+            budget_id,
+            company_id,
+            source_type,
+            source_id,
+            amount,
+            direction
+          )
+          VALUES ($1, $2, 'expense', $3, $4, 'debit')
+          `,
+          [rows[0].id, company_id, result.id, expenseAmount]
         );
       }
 
