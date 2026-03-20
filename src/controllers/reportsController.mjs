@@ -353,16 +353,34 @@ const getFinancialReport = async (companyId, dateFilter) => {
 
   // Core financial summary
   const summary = await pool.query(
-    `SELECT
-       COALESCE(SUM(CASE WHEN type = 'deposit' AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0) AS total_contributions,
-       COALESCE(SUM(CASE WHEN type = 'withdrawal' AND (status='completed' OR status='approved') AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0) AS total_withdrawals,
-       COALESCE(SUM(CASE WHEN type = 'deposit' AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0)
-         - COALESCE(SUM(CASE WHEN type = 'withdrawal' AND (status='completed' OR status='approved') AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0) AS net_flow,
-       COUNT(*) FILTER (WHERE is_deleted = false ${dateWhere}) AS total_transactions
-     FROM transactions t
-     WHERE t.company_id = $1`,
-    [companyId, ...values]
-  );
+  `SELECT
+     -- Contributions
+     COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0) AS total_contributions,
+
+     -- Withdrawals
+     COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS total_withdrawals,
+
+     -- Net Flow
+     COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0)
+       - COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS net_flow,
+
+     -- Transactions count
+     COUNT(*) AS total_transactions,
+
+     -- Commissions (from separate table)
+     COALESCE((
+       SELECT SUM(c.amount)
+       FROM commissions c
+       WHERE c.company_id = $1
+       ${dateWhere.replace(/t\./g, 'c.')}  -- reuse same date filter
+     ), 0) AS total_commissions
+
+   FROM transactions t
+   WHERE t.company_id = $1
+     AND t.is_deleted = false
+     ${dateWhere}`,
+  [companyId, ...values]
+);
 
   // Account balances overview
   const accountBalances = await pool.query(
@@ -422,7 +440,6 @@ const getFinancialReport = async (companyId, dateFilter) => {
     LIMIT 10`,
     [companyId, ...values]
   );
-
   return {
     summary: summary.rows[0],
     accountBalances: accountBalances.rows,

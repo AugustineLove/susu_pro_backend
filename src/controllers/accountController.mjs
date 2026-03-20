@@ -335,7 +335,7 @@ export const updateAccountSettings = async (req, res) => {
   } = req.body;
 
   const companyId = req.user?.companyId; 
-
+  console.log(accountId, companyId);
   try {
     // 1️⃣ Check account exists and belongs to company
     const { rows } = await pool.query(
