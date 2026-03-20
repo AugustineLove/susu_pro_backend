@@ -350,33 +350,28 @@ const getClientsReport = async (companyId, dateFilter) => {
 const getFinancialReport = async (companyId, dateFilter) => {
   const { clause, values } = dateFilter;
   const dateWhere = clause ? `AND ${clause}` : "";
-  const txDateWhere = `AND t.transaction_date >= $2 AND t.transaction_date <= $3`;
-
-  const commissionDateWhere = `AND c.created_at >= $2 AND c.created_at <= $3`;
 
   // Core financial summary
   const summary = await pool.query(
   `SELECT
-    COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0) AS total_contributions,
+     COALESCE(SUM(CASE WHEN type = 'deposit' AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0) AS total_contributions,
 
-    COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS total_withdrawals,
+     COALESCE(SUM(CASE WHEN type = 'withdrawal' AND (status='completed' OR status='approved') AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0) AS total_withdrawals,
 
-    COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0)
-      - COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS net_flow,
+     COALESCE(SUM(CASE WHEN type = 'deposit' AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0)
+       - COALESCE(SUM(CASE WHEN type = 'withdrawal' AND (status='completed' OR status='approved') AND is_deleted = false ${dateWhere} THEN amount ELSE 0 END), 0) AS net_flow,
 
-    COUNT(*) AS total_transactions,
+     COUNT(*) FILTER (WHERE is_deleted = false ${dateWhere}) AS total_transactions,
 
-    COALESCE((
-      SELECT SUM(c.amount)
-      FROM commissions c
-      WHERE c.company_id = $1
-      ${commissionDateWhere}
-    ), 0) AS total_commissions
+     COALESCE((
+       SELECT SUM(c.amount)
+       FROM commissions c
+       WHERE c.company_id = $1
+       ${dateWhere.replace(/t\./g, 'c.').replace(/transaction_date/g, 'created_at')}
+     ), 0) AS total_commissions
 
-  FROM transactions t
-  WHERE t.company_id = $1
-    AND t.is_deleted = false
-    ${txDateWhere}`,
+   FROM transactions t
+   WHERE t.company_id = $1`,
   [companyId, ...values]
 );
 
@@ -438,7 +433,7 @@ const getFinancialReport = async (companyId, dateFilter) => {
     LIMIT 10`,
     [companyId, ...values]
   );
-  console.log('Success')
+
   return {
     summary: summary.rows[0],
     accountBalances: accountBalances.rows,
