@@ -440,6 +440,7 @@ const getFinancialReport = async (companyId, dateFilter) => {
     LIMIT 10`,
     [companyId, ...values]
   );
+  console.log('Success')
   return {
     summary: summary.rows[0],
     accountBalances: accountBalances.rows,
