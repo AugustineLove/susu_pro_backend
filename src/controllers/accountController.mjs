@@ -334,7 +334,7 @@ export const updateAccountSettings = async (req, res) => {
     minimum_balance,
   } = req.body;
 
-  const companyId = req.user?.companyId; // from JWT middleware
+  const companyId = req.user?.companyId; 
 
   try {
     // 1️⃣ Check account exists and belongs to company
@@ -344,7 +344,7 @@ export const updateAccountSettings = async (req, res) => {
        WHERE id = $1 AND company_id = $2`,
       [accountId, companyId]
     );
-
+    console.log(rows.length)
     if (rows.length === 0) {
       return res.status(404).json({
         message: "Account not found."

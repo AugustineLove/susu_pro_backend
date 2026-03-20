@@ -106,7 +106,6 @@ export const getTransactionsByCustomer = async (req, res) => {
       [accountIds]
     );
 
-    console.log(transactionsResult.rows);
     return res.status(200).json({
       status: 'success',
       results: transactionsResult.rowCount,
