@@ -350,35 +350,33 @@ const getClientsReport = async (companyId, dateFilter) => {
 const getFinancialReport = async (companyId, dateFilter) => {
   const { clause, values } = dateFilter;
   const dateWhere = clause ? `AND ${clause}` : "";
+  const txDateWhere = `AND t.transaction_date >= $2 AND t.transaction_date <= $3`;
+
+  const commissionDateWhere = `AND c.created_at >= $2 AND c.created_at <= $3`;
 
   // Core financial summary
   const summary = await pool.query(
   `SELECT
-     -- Contributions
-     COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0) AS total_contributions,
+    COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0) AS total_contributions,
 
-     -- Withdrawals
-     COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS total_withdrawals,
+    COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS total_withdrawals,
 
-     -- Net Flow
-     COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0)
-       - COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS net_flow,
+    COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE 0 END), 0)
+      - COALESCE(SUM(CASE WHEN t.type = 'withdrawal' AND (t.status='completed' OR t.status='approved') THEN t.amount ELSE 0 END), 0) AS net_flow,
 
-     -- Transactions count
-     COUNT(*) AS total_transactions,
+    COUNT(*) AS total_transactions,
 
-     -- Commissions (from separate table)
-     COALESCE((
-       SELECT SUM(c.amount)
-       FROM commissions c
-       WHERE c.company_id = $1
-       ${dateWhere.replace(/t\./g, 'c.')}  -- reuse same date filter
-     ), 0) AS total_commissions
+    COALESCE((
+      SELECT SUM(c.amount)
+      FROM commissions c
+      WHERE c.company_id = $1
+      ${commissionDateWhere}
+    ), 0) AS total_commissions
 
-   FROM transactions t
-   WHERE t.company_id = $1
-     AND t.is_deleted = false
-     ${dateWhere}`,
+  FROM transactions t
+  WHERE t.company_id = $1
+    AND t.is_deleted = false
+    ${txDateWhere}`,
   [companyId, ...values]
 );
 
