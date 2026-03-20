@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createStaff, getAllStaffByCompany, getStaffByRole, getStaffDashboardByCompany, signInStaff, updateStaffPermissions } from "../controllers/staffController.mjs";
+import { createStaff, deleteStaff, getAllStaffByCompany, getStaffByRole, getStaffDashboardByCompany, signInStaff, updateStaffPermissions } from "../controllers/staffController.mjs";
 import { adminResetStaffPassword, changeStaffPassword, forceResetPassword } from "../controllers/auth/staffAuthController.mjs";
 
 export const staffRoutes = Router();
@@ -13,3 +13,4 @@ staffRoutes.put('/change-password', changeStaffPassword);
 staffRoutes.put('/:staff_id/reset-password', adminResetStaffPassword);
 staffRoutes.put('/:staff_id/force-reset-password', forceResetPassword);
 staffRoutes.patch('/:id/permissions', updateStaffPermissions);
+staffRoutes.delete('/:id', deleteStaff);

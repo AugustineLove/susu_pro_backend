@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { addBudget, getCompanyFinancials, recordEntry } from "../controllers/expenseController.mjs";
+import { addBudget, recordEntry } from "../controllers/expenseController.mjs";
+import { getCompanyFinancials } from "../controllers/financeController.mjs";
 
 export const financeRoutes = Router();
 

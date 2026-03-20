@@ -74,7 +74,7 @@ ORDER BY t.transaction_date DESC;
 
 export const getTransactionsByCustomer = async (req, res) => {
   const { customerId } = req.params;
-
+  console.log(customerId)
   try {
     // Get all account IDs for the customer
     const accountsResult = await pool.query(
@@ -93,14 +93,20 @@ export const getTransactionsByCustomer = async (req, res) => {
 
     // Fetch transactions for those account IDs
     const transactionsResult = await pool.query(
-      `SELECT t.*, a.account_type
+      `SELECT t.*, a.account_type,
+      rs.id AS recorded_staff_id,
+      rs.full_name as recorded_staff_name,
+      str.full_name as reversed_by_name
       FROM transactions t
+      LEFT JOIN staff rs ON t.staff_id = rs.id
+      LEFT JOIN staff str ON t.reversed_by = str.id
       JOIN accounts a ON t.account_id = a.id
       WHERE t.account_id = ANY($1::uuid[])
       ORDER BY t.transaction_date DESC;`,
       [accountIds]
     );
 
+    console.log(transactionsResult.rows);
     return res.status(200).json({
       status: 'success',
       results: transactionsResult.rowCount,
