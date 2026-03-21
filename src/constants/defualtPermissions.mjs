@@ -12,7 +12,8 @@ export const defaultPermissions = {
     SETTINGS_ACCESS: true,
     DELETE_CUSTOMER: true,
     ALTER_ACCOUNT: true,
-    ALTER_FINANCE: true
+    ALTER_FINANCE: true,
+    REVERSE_TRANSACTIONS: true
   },
   manager: {
     CUSTOMER_CREATE: true,
@@ -27,7 +28,8 @@ export const defaultPermissions = {
     SETTINGS_ACCESS: true,
     DELETE_CUSTOMER: true,
     ALTER_ACCOUNT: true,
-    ALTER_FINANCE: true
+    ALTER_FINANCE: true,
+    REVERSE_TRANSACTIONS: true
   },
   accountant: {
   MANAGE_STAFF: false,
@@ -42,7 +44,8 @@ export const defaultPermissions = {
   LOAN_PRIVILEGES: true,
   SETTINGS_ACCESS: false,
   TRANSACTION_CREATE: true,
-  PROCESS_TRANSACTIONS: true
+  PROCESS_TRANSACTIONS: true,
+  REVERSE_TRANSACTIONS: true
 },
   hr: {
   MANAGE_STAFF: true,
@@ -57,7 +60,8 @@ export const defaultPermissions = {
   LOAN_PRIVILEGES: true,
   SETTINGS_ACCESS: false,
   TRANSACTION_CREATE: false,
-  PROCESS_TRANSACTIONS: false
+  PROCESS_TRANSACTIONS: false,
+  REVERSE_TRANSACTIONS: false
 },
   sales_manager: {
   MANAGE_STAFF: false,
@@ -72,7 +76,8 @@ export const defaultPermissions = {
   LOAN_PRIVILEGES: false,
   SETTINGS_ACCESS: false,
   TRANSACTION_CREATE: true,
-  PROCESS_TRANSACTIONS: false
+  PROCESS_TRANSACTIONS: false,
+  REVERSE_TRANSACTIONS: false
 },
   loan_officer: {
     CUSTOMER_CREATE: false,
@@ -86,7 +91,8 @@ export const defaultPermissions = {
     PROCESS_TRANSACTIONS: false,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
-    ALTER_ACCOUNT: false
+    ALTER_ACCOUNT: false,
+    REVERSE_TRANSACTIONS: false
   },
   mobile_banker: {
     CUSTOMER_CREATE: true,
@@ -100,7 +106,8 @@ export const defaultPermissions = {
     PROCESS_TRANSACTIONS: true,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
-    ALTER_ACCOUNT: true
+    ALTER_ACCOUNT: true,
+    REVERSE_TRANSACTIONS: false
   },
   teller: {
     CUSTOMER_CREATE: false,
@@ -114,7 +121,8 @@ export const defaultPermissions = {
     PROCESS_TRANSACTIONS: true,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
-    ALTER_ACCOUNT: false
+    ALTER_ACCOUNT: false,
+    REVERSE_TRANSACTIONS: false
   },
   viewer: {
     CUSTOMER_CREATE: false,
@@ -128,6 +136,7 @@ export const defaultPermissions = {
     PROCESS_TRANSACTIONS: false,
     SETTINGS_ACCESS: false,
     DELETE_CUSTOMER: false,
-    ALTER_ACCOUNT: false
+    ALTER_ACCOUNT: false,
+    REVERSE_TRANSACTIONS: false
   }
 };
