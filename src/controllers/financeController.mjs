@@ -105,24 +105,26 @@ export const getCompanyFinancials = async (req, res) => {
 
       // ── Budgets in range ──
       pool.query(
-          `
-          SELECT 
-            b.id,
-            b.allocated,
-            b.spent,
-            b.date,
-            b.remaining,
-            b.status,
-            b.teller_id,
-            s.name AS teller_name
-          FROM budgets b
-          JOIN staff s ON b.teller_id = s.id
-          WHERE b.company_id = $1
-            AND b.date BETWEEN $2 AND $3
-          ORDER BY b.date DESC
-          `,
-          [companyId, start, end]
-        ),
+        `
+        SELECT 
+          b.id,
+          b.allocated,
+          b.spent,
+          b.date,
+          b.remaining,
+          b.status,
+          b.teller_id,
+          s.full_name AS teller_name,
+          rb.full_name AS recorded_by_name
+        FROM budgets b
+        LEFT JOIN staff s ON b.teller_id = s.id
+        LEFT JOIN staff rb ON b.recorded_by = rb.id
+        WHERE b.company_id = $1
+          AND b.date BETWEEN $2 AND $3
+        ORDER BY b.date DESC
+        `,
+        [companyId, start, end]
+      ),
 
       // ── Commissions in range (sum + count) ──
       pool.query(

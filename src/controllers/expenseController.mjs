@@ -325,7 +325,7 @@ export const addBudget = async (req, res) => {
   console.log("Incoming data:", req.body);
 
   // ✅ Validation
-  if (!company_id || !teller_id || !allocated || Number(allocated) <= 0) {
+  if (!company_id || !teller_id || !recorded_by || !allocated || Number(allocated) <= 0) {
     return res.status(400).json({
       status: "fail",
       message: "company_id, teller_id and a valid allocated amount are required",
@@ -357,11 +357,11 @@ export const addBudget = async (req, res) => {
       // 🆕 2. Create new float for this teller
       const insertRes = await client.query(
         `
-        INSERT INTO budgets (company_id, date, allocated, spent, status, teller_id)
-        VALUES ($1, $2, $3, 0, 'Active', $4)
+        INSERT INTO budgets (company_id, date, allocated, spent, status, teller_id, recorded_by)
+        VALUES ($1, $2, $3, 0, 'Active', $4, $5)
         RETURNING *
         `,
-        [company_id, today, Number(allocated), teller_id]
+        [company_id, today, Number(allocated), teller_id, recorded_by]
       );
 
       budget = insertRes.rows[0];
