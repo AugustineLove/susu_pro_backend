@@ -275,7 +275,7 @@ export const getCompanyFinancials = async (req, res) => {
         [companyId]
       ),
       pool.query(
-        `SELECT id, allocated, spent, date, remaining, status
+        `SELECT id, allocated, spent, date, remaining, status, teller_id
          FROM budgets
          WHERE company_id = $1
          ORDER BY date DESC`,
@@ -320,13 +320,15 @@ export const getCompanyFinancials = async (req, res) => {
 
 
 export const addBudget = async (req, res) => {
-  const { company_id, allocated, source, recorded_by } = req.body;
-  console.log(req.body);
+  const { company_id, allocated, source, recorded_by, teller_id } = req.body;
 
-  if (!company_id || !allocated || Number(allocated) <= 0) {
+  console.log("Incoming data:", req.body);
+
+  // ✅ Validation
+  if (!company_id || !teller_id || !allocated || Number(allocated) <= 0) {
     return res.status(400).json({
       status: "fail",
-      message: "company_id and a valid allocated amount are required",
+      message: "company_id, teller_id and a valid allocated amount are required",
     });
   }
 
@@ -336,29 +338,30 @@ export const addBudget = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1️⃣ Check if today's budget exists
+    // 🔍 1. Check if THIS teller already has a float today
     const budgetRes = await client.query(
       `
       SELECT *
       FROM budgets
       WHERE company_id = $1
-        AND date = $2
+        AND teller_id = $2
+        AND date = $3
       FOR UPDATE
       `,
-      [company_id, today]
+      [company_id, teller_id, today]
     );
 
     let budget;
 
-    // 2️⃣ If no budget → create one (Active by default)
     if (budgetRes.rowCount === 0) {
+      // 🆕 2. Create new float for this teller
       const insertRes = await client.query(
         `
-        INSERT INTO budgets (company_id, date, allocated, spent, status)
-        VALUES ($1, $2, $3, 0, 'Active')
+        INSERT INTO budgets (company_id, date, allocated, spent, status, teller_id)
+        VALUES ($1, $2, $3, 0, 'Active', $4)
         RETURNING *
         `,
-        [company_id, today, allocated]
+        [company_id, today, Number(allocated), teller_id]
       );
 
       budget = insertRes.rows[0];
@@ -366,15 +369,16 @@ export const addBudget = async (req, res) => {
     } else {
       budget = budgetRes.rows[0];
 
+      // 🚫 Prevent updates if not active
       if (budget.status !== "Active") {
         await client.query("ROLLBACK");
         return res.status(403).json({
           status: "fail",
-          message: `Budget is ${budget.status}. You cannot add funds to this budget.`,
+          message: `Budget is ${budget.status}. You cannot add funds.`,
         });
       }
 
-      // 3️⃣ Update allocated amount
+      // 🔁 3. Add to existing float
       const updateRes = await client.query(
         `
         UPDATE budgets
@@ -382,39 +386,48 @@ export const addBudget = async (req, res) => {
         WHERE id = $2
         RETURNING *
         `,
-        [allocated, budget.id]
+        [Number(allocated), budget.id]
       );
 
       budget = updateRes.rows[0];
     }
 
-    // 4️⃣ Record top-up history
+    // 📝 4. Record top-up history
     await client.query(
       `
       INSERT INTO budget_topups (budget_id, amount, source, recorded_by)
       VALUES ($1, $2, $3, $4)
       `,
-      [budget.id, allocated, source || "manual", recorded_by || null]
+      [
+        budget.id,
+        Number(allocated),
+        source || "manual",
+        recorded_by || null,
+      ]
     );
 
     await client.query("COMMIT");
 
     return res.status(201).json({
       status: "success",
+      message: "Float processed successfully",
       data: {
         budget,
-        available: budget.allocated - budget.spent,
+        available: Number(budget.allocated) - Number(budget.spent),
       },
     });
 
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("Error adding budget:", error);
+
+    console.error("🔥 FULL ERROR:", error);
 
     return res.status(500).json({
       status: "error",
       message: "Internal server error",
+      error: error.message, // ✅ clean error output
     });
+
   } finally {
     client.release();
   }
