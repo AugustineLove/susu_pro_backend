@@ -343,6 +343,7 @@ export const formatEndDate = (date) => {
 export const approveTransaction = async (req, res) => {
   const transactionId = req.params.id;
   const client = await pool.connect();
+  const { teller_id } = req.body;
 
   try {
     await client.query("BEGIN");

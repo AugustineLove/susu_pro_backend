@@ -627,6 +627,7 @@ export const searchCustomers = async (req, res) => {
       SELECT 
         c.id,
         c.name,
+        c.status,
         c.phone_number,
         c.email,
         c.account_number,
