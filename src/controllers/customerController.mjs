@@ -632,7 +632,11 @@ export const searchCustomers = async (req, res) => {
         c.email,
         c.account_number,
         c.daily_rate,
-        c.id as customer_id,
+        c.id AS customer_id,
+
+        -- ✅ NEW FIELDS
+        c.send_sms,
+        COALESCE(c.sms_numbers, '{}') AS sms_numbers,
 
         -- Staff Info
         s.id AS registered_by,
@@ -686,6 +690,115 @@ export const searchCustomers = async (req, res) => {
 
   } catch (error) {
     console.error("Search error:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+    });
+  }
+};
+
+// POST /customers/:customerId/sms-numbers
+export const addSmsNumber = async (req, res) => {
+  const { customerId } = req.params;
+  const { phoneNumber } = req.body;
+
+  if (!phoneNumber) {
+    return res.status(400).json({
+      status: "error",
+      message: "Phone number is required",
+    });
+  }
+
+  try {
+    // Avoid duplicates
+    const result = await pool.query(
+      `
+      UPDATE customers
+      SET sms_numbers = (
+        CASE 
+          WHEN sms_numbers @> ARRAY[$1] THEN sms_numbers
+          ELSE array_append(sms_numbers, $1)
+        END
+      )
+      WHERE id = $2
+      RETURNING sms_numbers;
+      `,
+      [phoneNumber, customerId]
+    );
+
+    return res.status(200).json({
+      status: "success",
+      sms_numbers: result.rows[0].sms_numbers,
+    });
+
+  } catch (error) {
+    console.error("Add SMS number error:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+    });
+  }
+};
+
+// DELETE /customers/:customerId/sms-numbers
+export const removeSmsNumber = async (req, res) => {
+  const { customerId } = req.params;
+  const { phoneNumber } = req.body;
+
+  if (!phoneNumber) {
+    return res.status(400).json({
+      status: "error",
+      message: "Phone number is required",
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      UPDATE customers
+      SET sms_numbers = array_remove(sms_numbers, $1)
+      WHERE id = $2
+      RETURNING sms_numbers;
+      `,
+      [phoneNumber, customerId]
+    );
+
+    return res.status(200).json({
+      status: "success",
+      sms_numbers: result.rows[0].sms_numbers,
+    });
+
+  } catch (error) {
+    console.error("Remove SMS number error:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+    });
+  }
+};
+
+// PATCH /customers/:customerId/toggle-sms
+export const toggleSendSms = async (req, res) => {
+  const { customerId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `
+      UPDATE customers
+      SET send_sms = NOT send_sms
+      WHERE id = $1
+      RETURNING send_sms;
+      `,
+      [customerId]
+    );
+
+    return res.status(200).json({
+      status: "success",
+      send_sms: result.rows[0].send_sms,
+    });
+
+  } catch (error) {
+    console.error("Toggle SMS error:", error.message);
     return res.status(500).json({
       status: "error",
       message: "Internal server error",

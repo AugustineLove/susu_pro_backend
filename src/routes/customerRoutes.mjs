@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createCustomer, deleteCustomer, getCustomerByAccountNumber, getCustomerById, getCustomersByCompany, getCustomersByStaff, loginCustomer, searchCustomers, udpateCustomerInfoMobile, updateCustomer } from "../controllers/customerController.mjs";
+import { addSmsNumber, createCustomer, deleteCustomer, getCustomerByAccountNumber, getCustomerById, getCustomersByCompany, getCustomersByStaff, loginCustomer, removeSmsNumber, searchCustomers, toggleSendSms, udpateCustomerInfoMobile, updateCustomer } from "../controllers/customerController.mjs";
 import { requirePermission } from "../middlewares/staffPermissions.mjs";
 import { verifyCompanyToken } from "../middlewares/verifyCompany.mjs";
 
@@ -15,4 +15,7 @@ customerRouter.get('/:customerId', getCustomerById);
 customerRouter.put('/customer', updateCustomer);
 customerRouter.get("/account/:accountNumber", getCustomerByAccountNumber);
 customerRouter.post("/login", loginCustomer);
-customerRouter.get("/:companyId/search", searchCustomers)
+customerRouter.get("/:companyId/search", searchCustomers);
+customerRouter.post("/:customerId/sms-numbers", addSmsNumber);
+customerRouter.delete("/:customerId/sms-numbers", removeSmsNumber);
+customerRouter.patch("/:customerId/toggle-sms", toggleSendSms)
