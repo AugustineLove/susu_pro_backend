@@ -634,7 +634,6 @@ export const searchCustomers = async (req, res) => {
         c.daily_rate,
         c.id AS customer_id,
 
-        -- ✅ NEW FIELDS
         c.send_sms,
         COALESCE(c.sms_numbers, '{}') AS sms_numbers,
 

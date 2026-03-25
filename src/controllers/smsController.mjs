@@ -8,7 +8,7 @@ export const sendCustomerMessage = async (req, res) => {
     const data = {
         "sender": messageFrom,
         "message": message,
-        "recipients": [messageTo],
+        "recipients": Array.isArray(messageTo) ? messageTo : [messageTo],
       };
 
         const config = {
