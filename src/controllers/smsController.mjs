@@ -5,6 +5,7 @@ dotenv.config();
 export const sendCustomerMessage = async (req, res) => {
     console.log("sending message")
     const { messageTo, messageFrom, message } = req.body;
+    console.log(messageTo)
     const data = {
         "sender": messageFrom,
         "message": message,
