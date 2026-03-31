@@ -452,6 +452,7 @@ export const createP2PLoan = async (req, res) => {
     // customer_id is optional for P2P — they may not be a registered customer
     customer_id,
   } = req.body;
+  console.log(req.body);
 
   const missing = [];
   if (!recipient_name) missing.push('recipient_name');
