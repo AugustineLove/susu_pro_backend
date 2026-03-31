@@ -718,7 +718,7 @@ export const getLoans = async (req, res) => {
       page = 1,
       limit = 20,
     } = req.query;
-
+     console.log(req.body)
     // ─────────────────────────────────────────────
     // VALIDATION
     // ─────────────────────────────────────────────
@@ -736,8 +736,8 @@ export const getLoans = async (req, res) => {
     // ─────────────────────────────────────────────
     // BUILD QUERY CONDITIONS
     // ─────────────────────────────────────────────
-    let conditions;
-    let values;
+    let conditions = [];
+    let values = [];
     let idx = 1;
 
     // Always filter by company
