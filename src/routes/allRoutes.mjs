@@ -8,11 +8,11 @@ import { transactionRouter } from './transactionRoutes.mjs';
 import authRouter from './auth/authRoutes.mjs';
 import { messageRouter } from './messageRoutes.mjs';
 import { financeRoutes } from './expenseRoutes.mjs';
-import { loanRoutes } from './loanRoutes.mjs';
 import { floatRoutes } from './floatRoutes.mjs';
 import commissionRoute from './commissionRouters.mjs';
 import budgetRoutes from './budgetRoutes.mjs';
 import reportRoutes from './reportRoutes.mjs';
+import loanRoutes from './loanRoutes.mjs';
 
 const allRoutes = Router();
 
