@@ -228,6 +228,7 @@ export const createGroupLoan = async (req, res) => {
     created_by_type,
   } = req.body;
 
+  console.log(req.body);
   // Required fields
   const missing = [];
   if (!group_name)     missing.push('group_name');
@@ -709,63 +710,112 @@ export const logRepayment = async (req, res) => {
  * type: 'individual' | 'group' | 'group_member' | 'p2p'
  */
 export const getLoans = async (req, res) => {
-  const { company_id, type, status, page = 1, limit = 20 } = req.query;
-
-  if (!company_id) {
-    return res.status(400).json({ status: 'fail', message: 'company_id is required' });
-  }
-
-  const offset = (parseInt(page) - 1) * parseInt(limit);
-  const conditions = ['l.company_id = $1'];
-  const values = [company_id];
-  let idx = 2;
-
-  if (type) {
-    conditions.push(`l.loantype = $${idx++}`);
-    values.push(type);
-  }
-  if (status) {
-    conditions.push(`l.status = $${idx++}`);
-    values.push(status);
-  }
-
-  const where = conditions.join(' AND ');
-
   try {
+    const {
+      company_id,
+      type,
+      status,
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    // ─────────────────────────────────────────────
+    // VALIDATION
+    // ─────────────────────────────────────────────
+    if (!company_id) {
+      return res.status(400).json({
+        status: "fail",
+        message: "company_id is required",
+      });
+    }
+
+    const pageNum = Math.max(parseInt(page), 1);
+    const limitNum = Math.max(parseInt(limit), 1);
+    const offset = (pageNum - 1) * limitNum;
+
+    // ─────────────────────────────────────────────
+    // BUILD QUERY CONDITIONS
+    // ─────────────────────────────────────────────
+    let conditions;
+    let values;
+    let idx = 1;
+
+    // Always filter by company
+    conditions.push(`l.company_id = $${idx++}`);
+    values.push(company_id);
+
+    // Exclude internal group member records
+    conditions.push(`l.loantype != 'group_member'`);
+
+    // Optional filters
+    if (type) {
+      conditions.push(`l.loantype = $${idx++}`);
+      values.push(type);
+    }
+
+    if (status) {
+      conditions.push(`l.status = $${idx++}`);
+      values.push(status);
+    }
+
+    const whereClause = conditions.join(" AND ");
+
+    // ─────────────────────────────────────────────
+    // MAIN QUERY
+    // ─────────────────────────────────────────────
+    const dataQuery = `
+      SELECT 
+        l.*,
+        c.name AS customer_name,
+        c.phone_number AS customer_phone,
+        c.email AS customer_email,
+
+        -- Optional: count members if group loan
+        (
+          SELECT COUNT(*) 
+          FROM loans m 
+          WHERE m.group_id = l.id
+        ) AS member_count
+
+      FROM loans l
+      LEFT JOIN customers c ON l.customer_id = c.id
+      WHERE ${whereClause}
+      ORDER BY l.created_at DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `;
+
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM loans l
+      WHERE ${whereClause}
+    `;
+
     const [dataRes, countRes] = await Promise.all([
-      pool.query(
-        `SELECT l.*,
-          c.name AS customer_name,
-          c.phone_number AS customer_phone,
-          c.email AS customer_email
-         FROM loans l
-         LEFT JOIN customers c ON l.customer_id = c.id
-         WHERE ${where}
-         ORDER BY l.created_at DESC
-         LIMIT $${idx} OFFSET $${idx + 1}`,
-        [...values, parseInt(limit), offset]
-      ),
-      pool.query(
-        `SELECT COUNT(*) FROM loans l WHERE ${where}`,
-        values
-      ),
+      pool.query(dataQuery, [...values, limitNum, offset]),
+      pool.query(countQuery, values),
     ]);
 
-    const total = parseInt(countRes.rows[0].count);
+    const total = parseInt(countRes.rows[0].count, 10);
 
+    // ─────────────────────────────────────────────
+    // RESPONSE
+    // ─────────────────────────────────────────────
     return res.status(200).json({
-      status: 'success',
+      status: "success",
       data: dataRes.rows,
       pagination: {
         total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit)),
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(total / limitNum),
       },
     });
   } catch (error) {
-    console.error('getLoans error:', error.message);
-    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+    console.error("getLoans error:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+    });
   }
 };
 
