@@ -735,7 +735,7 @@ export const getLoans = async (req, res) => {
       pool.query(
         `SELECT l.*,
           c.name AS customer_name,
-          c.phone AS customer_phone,
+          c.phone_number AS customer_phone,
           c.email AS customer_email
          FROM loans l
          LEFT JOIN customers c ON l.customer_id = c.id
