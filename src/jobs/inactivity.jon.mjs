@@ -32,6 +32,19 @@ cron.schedule("0 2 * * *", async () => {
       )
     `);
 
+    await client.query(`
+      UPDATE customers c
+      SET status = 'Active'
+      WHERE c.status = 'Inactive'
+      AND EXISTS (
+        SELECT 1
+        FROM accounts a
+        JOIN transactions t ON t.account_id = a.id
+        WHERE a.customer_id = c.id
+          AND t.created_at >= NOW() - INTERVAL '6 hours'
+      )
+    `);
+
     await client.query("COMMIT");
 
     console.log("✅ Inactivity cron completed");
