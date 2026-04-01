@@ -382,10 +382,10 @@ export const createGroupLoan = async (req, res) => {
  */
 export const getGroupLoanWithMembers = async (req, res) => {
   const { groupId } = req.params;
-
+  console.log(`Group id: ${groupId}`)
   try {
     const groupResult = await pool.query(
-      `SELECT l.*, c.name AS customer_name, c.phone AS customer_phone
+      `SELECT l.*, c.name AS customer_name, c.phone_number AS customer_phone
        FROM loans l
        LEFT JOIN customers c ON l.customer_id = c.id
        WHERE l.id = $1 AND l.loantype = 'group'`,
@@ -397,7 +397,7 @@ export const getGroupLoanWithMembers = async (req, res) => {
     }
 
     const membersResult = await pool.query(
-      `SELECT l.*, c.name AS customer_name, c.phone AS customer_phone
+      `SELECT l.*, c.name AS customer_name, c.phone_number AS customer_phone
        FROM loans l
        LEFT JOIN customers c ON l.customer_id = c.id
        WHERE l.group_id = $1 AND l.loantype = 'group_member'
@@ -405,6 +405,7 @@ export const getGroupLoanWithMembers = async (req, res) => {
       [groupId]
     );
 
+    console.log(membersResult.rows)
     return res.status(200).json({
       status: 'success',
       data: {
@@ -451,7 +452,7 @@ export const createP2PLoan = async (req, res) => {
     created_by,
     created_by_type,
     // customer_id is optional for P2P — they may not be a registered customer
-    customer_id,
+    customer_id ,
   } = req.body;
   console.log(req.body);
 
@@ -475,7 +476,7 @@ export const createP2PLoan = async (req, res) => {
 
   const id = uuidv4();
   // For P2P without a registered customer, use created_by as the customer reference
-  const effectiveCustomerId = customer_id || created_by;
+  const effectiveCustomerId = customer_id || null;
 
   const client = await pool.connect();
   try {
