@@ -405,7 +405,6 @@ export const getGroupLoanWithMembers = async (req, res) => {
       [groupId]
     );
 
-    console.log(membersResult.rows)
     return res.status(200).json({
       status: 'success',
       data: {
