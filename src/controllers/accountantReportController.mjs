@@ -229,7 +229,7 @@ export const getDailyReport = async (req, res) => {
     // ── Full transaction list for the day ──
     const transactions = await pool.query(
       `SELECT
-         t.id, t.type, t.amount, t.status, t.transaction_date, t.reference,
+         t.id, t.type, t.amount, t.status, t.transaction_date, t.description,
          c.name AS customer_name, c.phone_number AS customer_phone,
          a.account_type
        FROM transactions t
