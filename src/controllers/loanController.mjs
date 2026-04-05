@@ -582,7 +582,7 @@ export const updateP2PStatus = async (req, res) => {
 export const logRepayment = async (req, res) => {
   const { id } = req.params;
   const { amount_paid, payment_date, note, company_id, created_by } = req.body;
-
+  console.log(amount_paid)
   if (!amount_paid || parseFloat(amount_paid) <= 0) {
     return res.status(400).json({ status: 'fail', message: 'amount_paid must be a positive number' });
   }

@@ -13,6 +13,7 @@ import commissionRoute from './commissionRouters.mjs';
 import budgetRoutes from './budgetRoutes.mjs';
 import reportRoutes from './reportRoutes.mjs';
 import loanRoutes from './loanRoutes.mjs';
+import dayEndRouter from './dayEndRoutes.mjs';
 
 const allRoutes = Router();
 
@@ -29,5 +30,6 @@ allRoutes.use('/api/float', floatRoutes);
 allRoutes.use('/api/commissions', commissionRoute);
 allRoutes.use('/api/budgets', budgetRoutes);
 allRoutes.use('/api/reports', reportRoutes);
+allRoutes.use('/api/day-end', dayEndRouter);
 
 export default allRoutes;
