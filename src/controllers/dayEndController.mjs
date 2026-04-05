@@ -52,6 +52,7 @@ export const getDayEndSummary = async (req, res) => {
   const { date } = req.query;
   const { start, end, label } = targetDateRange(date);
 
+  console.log({start, end, label})
   if (!companyId) {
     return res.status(400).json({ status: "fail", message: "companyId is required" });
   }
@@ -83,9 +84,9 @@ export const getDayEndSummary = async (req, res) => {
            COALESCE(SUM(amount) FILTER (WHERE type = 'transfer_out' AND is_deleted = false), 0) AS transfer_total,
 
            COUNT(*) FILTER (WHERE status = 'reversed' AND is_deleted = false)::int        AS reversal_count,
-           COALESCE(SUM(amount) FILTER (WHERE status = 'reversed' AND is_deleted = false), 0) AS reversal_total,
+           COALESCE(SUM(amount) FILTER (WHERE t.status = 'reversed' AND is_deleted = false), 0) AS reversal_total,
 
-           COUNT(*) FILTER (WHERE type = 'withdrawal' AND status = 'pending' AND is_deleted = false)::int AS pending_withdrawal_count,
+           COUNT(*) FILTER (WHERE type = 'withdrawal' AND t.status = 'pending' AND is_deleted = false)::int AS pending_withdrawal_count,
 
            COUNT(*) FILTER (WHERE is_deleted = false)::int AS total_transactions,
            COALESCE(SUM(amount) FILTER (WHERE type = 'deposit' AND is_deleted = false), 0)
