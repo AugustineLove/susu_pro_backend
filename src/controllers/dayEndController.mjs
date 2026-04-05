@@ -566,7 +566,7 @@ export const getFinancialDayEnd = async (req, res) => {
            (SELECT COALESCE(SUM(amount), 0) FROM revenue  WHERE company_id = $1 AND payment_date BETWEEN $2 AND $3)  AS total_revenue,
            (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE company_id = $1 AND expense_date BETWEEN $2 AND $3)  AS total_expenses,
            (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE company_id = $1 AND status = 'paid' AND created_at BETWEEN $2 AND $3) AS total_commission_paid,
-           (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE company_id = $1 AND type = 'withdrawal' AND 'is_deleted' = false AND created_at BETWEEN $2 AND $3) AS total_withdrawals,
+           (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE company_id = $1 AND type = 'withdrawal' AND is_deleted = false AND created_at BETWEEN $2 AND $3) AS total_withdrawals,
            (SELECT COALESCE(SUM(amount), 0) FROM loan_repayments lr JOIN loans l ON lr.loan_id = l.id WHERE l.company_id = $1 AND lr.payment_date = $4) AS loan_repayment_income`,
         [companyId, start, end, label]
       ),
