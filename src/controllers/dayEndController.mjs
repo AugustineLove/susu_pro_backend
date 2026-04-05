@@ -27,327 +27,228 @@ const targetDateRange = (dateStr) => {
   start.setHours(0, 0, 0, 0);
   const end = new Date(d);
   end.setHours(23, 59, 59, 999);
-  return { start: start.toISOString(), end: end.toISOString(), label: d.toISOString().split("T")[0] };
+  return { 
+    start: start.toISOString(), 
+    end: end.toISOString(), 
+    label: d.toISOString().split("T")[0] 
+  };
 };
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. MASTER DAY-END SUMMARY  (CEO / Manager / Accountant view)
-//    GET /api/day-end/:companyId/summary?date=YYYY-MM-DD
-//
-//  Returns a single consolidated snapshot of EVERYTHING that happened today:
-//    • Transaction totals (deposits, withdrawals, transfers, reversals)
-//    • Float position per teller (opened vs. closed)
-//    • Loan activity (disbursements, repayments, new applications)
-//    • Commission earned today
-//    • Revenue & expenses recorded today
-//    • New customers registered today
-//    • Staff activity log (who did what)
-//    • Outstanding pending withdrawals
-//    • Overdue loans count
-// ─────────────────────────────────────────────────────────────────────────────
-
+/**
+ * MASTER DAY-END SUMMARY
+ * GET /api/day-end/:companyId/summary?date=YYYY-MM-DD
+ */
 export const getDayEndSummary = async (req, res) => {
   const { companyId } = req.params;
   const { date } = req.query;
   const { start, end, label } = targetDateRange(date);
 
-  console.log({start, end, label})
   if (!companyId) {
     return res.status(400).json({ status: "fail", message: "companyId is required" });
   }
 
   try {
-    const [
-      transactionSummary,
-      floatSummary,
-      loanActivity,
-      commissionToday,
-      financialsToday,
-      newCustomers,
-      staffActivity,
-      pendingWithdrawals,
-      overdueLoans,
-      repaymentToday,
-    ] = await Promise.all([
-
-      // ── 1a. Transaction totals for the day ──
+    const queries = [
+      // ── 1a. Transaction totals ──
       pool.query(
         `SELECT
-           COUNT(*) FILTER (WHERE type = 'deposit' AND is_deleted = false)::int           AS deposit_count,
+           COUNT(*) FILTER (WHERE type = 'deposit' AND is_deleted = false)::int AS deposit_count,
            COALESCE(SUM(amount) FILTER (WHERE type = 'deposit' AND is_deleted = false), 0) AS deposit_total,
-
-           COUNT(*) FILTER (WHERE type = 'withdrawal' AND status IN ('approved','completed') AND is_deleted = false)::int  AS withdrawal_count,
+           COUNT(*) FILTER (WHERE type = 'withdrawal' AND status IN ('approved','completed') AND is_deleted = false)::int AS withdrawal_count,
            COALESCE(SUM(amount) FILTER (WHERE type = 'withdrawal' AND status IN ('approved','completed') AND is_deleted = false), 0) AS withdrawal_total,
-
-           COUNT(*) FILTER (WHERE type = 'transfer_out' AND is_deleted = false)::int      AS transfer_count,
+           COUNT(*) FILTER (WHERE type = 'transfer_out' AND is_deleted = false)::int AS transfer_count,
            COALESCE(SUM(amount) FILTER (WHERE type = 'transfer_out' AND is_deleted = false), 0) AS transfer_total,
-
-           COUNT(*) FILTER (WHERE status = 'reversed' AND is_deleted = false)::int        AS reversal_count,
-           COALESCE(SUM(amount) FILTER (WHERE t.status = 'reversed' AND is_deleted = false), 0) AS reversal_total,
-
-           COUNT(*) FILTER (WHERE type = 'withdrawal' AND t.status = 'pending' AND is_deleted = false)::int AS pending_withdrawal_count,
-
+           COUNT(*) FILTER (WHERE status = 'reversed' AND is_deleted = false)::int AS reversal_count,
+           COALESCE(SUM(amount) FILTER (WHERE status = 'reversed' AND is_deleted = false), 0) AS reversal_total,
+           COUNT(*) FILTER (WHERE type = 'withdrawal' AND status = 'pending' AND is_deleted = false)::int AS pending_withdrawal_count,
            COUNT(*) FILTER (WHERE is_deleted = false)::int AS total_transactions,
            COALESCE(SUM(amount) FILTER (WHERE type = 'deposit' AND is_deleted = false), 0)
              - COALESCE(SUM(amount) FILTER (WHERE type = 'withdrawal' AND status IN ('approved','completed') AND is_deleted = false), 0) AS net_flow
-         FROM transactions t
-         WHERE t.company_id = $1
-           AND t.transaction_date BETWEEN $2 AND $3`,
+         FROM transactions
+         WHERE company_id = $1 AND transaction_date BETWEEN $2 AND $3`,
         [companyId, start, end]
       ),
 
-      // ── 1b. Float / budget summary for the day ──
+      // ── 1b. Float / budget summary ──
       pool.query(
         `SELECT
-           COUNT(*)::int                        AS teller_count,
-           COALESCE(SUM(b.allocated), 0)        AS total_allocated,
-           COALESCE(SUM(b.spent), 0)            AS total_spent,
+           COUNT(*)::int AS teller_count,
+           COALESCE(SUM(b.allocated), 0) AS total_allocated,
+           COALESCE(SUM(b.spent), 0) AS total_spent,
            COALESCE(SUM(b.allocated - b.spent), 0) AS total_remaining,
-           COUNT(*) FILTER (WHERE b.status = 'Active')::int  AS active_floats,
-           COUNT(*) FILTER (WHERE b.status = 'Closed')::int  AS closed_floats,
+           COUNT(*) FILTER (WHERE b.status = 'Active')::int AS active_floats,
+           COUNT(*) FILTER (WHERE b.status = 'Closed')::int AS closed_floats,
            JSON_AGG(JSON_BUILD_OBJECT(
-             'budget_id',  b.id,
-             'teller_id',  b.teller_id,
+             'budget_id', b.id,
+             'teller_id', b.teller_id,
              'teller_name', s.full_name,
-             'allocated',  b.allocated,
-             'spent',      b.spent,
-             'remaining',  b.allocated - b.spent,
-             'status',     b.status
+             'allocated', b.allocated,
+             'spent', b.spent,
+             'remaining', b.allocated - b.spent,
+             'status', b.status
            ) ORDER BY b.allocated DESC) AS teller_floats
          FROM budgets b
          LEFT JOIN staff s ON b.teller_id = s.id
-         WHERE b.company_id = $1
-           AND b.date = $4`,
-        [companyId, start, end, label]
+         WHERE b.company_id = $1 AND b.date = $2`,
+        [companyId, label]
       ),
 
-      // ── 1c. Loan activity today ──
+      // ── 1c. Loan activity (Fixed ambiguity) ──
       pool.query(
         `SELECT
-           COUNT(*) FILTER (WHERE status = 'pending'   AND created_at BETWEEN $2 AND $3)::int  AS new_applications,
-           COUNT(*) FILTER (WHERE status = 'active'    AND approved_at BETWEEN $2 AND $3)::int AS approved_today,
-           COUNT(*) FILTER (WHERE status = 'rejected'  AND updated_at BETWEEN $2 AND $3)::int  AS rejected_today,
-           COUNT(*) FILTER (WHERE status = 'completed' AND updated_at BETWEEN $2 AND $3)::int  AS completed_today,
-           COALESCE(SUM(loanamount) FILTER (WHERE approved_at BETWEEN $2 AND $3), 0)           AS disbursed_today,
-           COUNT(*) FILTER (WHERE days_overdue > 0)::int                                        AS total_overdue
+           COUNT(*) FILTER (WHERE status = 'pending' AND created_at BETWEEN $2 AND $3)::int AS new_applications,
+           COUNT(*) FILTER (WHERE status = 'active' AND approved_at BETWEEN $2 AND $3)::int AS approved_today,
+           COUNT(*) FILTER (WHERE status = 'rejected' AND updated_at BETWEEN $2 AND $3)::int AS rejected_today,
+           COUNT(*) FILTER (WHERE status = 'completed' AND updated_at BETWEEN $2 AND $3)::int AS completed_today,
+           COALESCE(SUM(loanamount) FILTER (WHERE approved_at BETWEEN $2 AND $3), 0) AS disbursed_today,
+           COUNT(*) FILTER (WHERE days_overdue > 0 AND status = 'active')::int AS total_overdue
          FROM loans
-         WHERE company_id = $1
-           AND loantype != 'group_member'`,
+         WHERE company_id = $1 AND loantype != 'group_member'`,
         [companyId, start, end]
       ),
 
-      // ── 1d. Commission earned today ──
+      // ── 1d. Commissions ──
       pool.query(
         `SELECT
-           COUNT(*)::int                                      AS count,
-           COALESCE(SUM(amount), 0)                          AS total_earned,
+           COUNT(*)::int AS count,
+           COALESCE(SUM(amount), 0) AS total_earned,
            COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) AS paid_amount,
            COALESCE(SUM(amount) FILTER (WHERE status = 'reversed'), 0) AS reversed_amount
          FROM commissions
-         WHERE company_id = $1
-           AND created_at BETWEEN $2 AND $3`,
+         WHERE company_id = $1 AND created_at BETWEEN $2 AND $3`,
         [companyId, start, end]
       ),
 
-      // ── 1e. Revenue & expenses today ──
+      // ── 1e. Revenue & Expenses ──
       pool.query(
-        `SELECT
-           (SELECT COALESCE(SUM(amount), 0) FROM revenue  WHERE company_id = $1 AND payment_date BETWEEN $2 AND $3)  AS revenue_today,
-           (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE company_id = $1 AND expense_date BETWEEN $2 AND $3)  AS expenses_today,
-           (SELECT COUNT(*)::int           FROM revenue  WHERE company_id = $1 AND payment_date BETWEEN $2 AND $3)   AS revenue_entries,
-           (SELECT COUNT(*)::int           FROM expenses WHERE company_id = $1 AND expense_date BETWEEN $2 AND $3)   AS expense_entries`,
+        `SELECT 
+          (SELECT COALESCE(SUM(amount), 0) FROM revenue WHERE company_id = $1 AND payment_date BETWEEN $2 AND $3) AS revenue_today,
+          (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE company_id = $1 AND expense_date BETWEEN $2 AND $3) AS expenses_today,
+          (SELECT COUNT(*)::int FROM revenue WHERE company_id = $1 AND payment_date BETWEEN $2 AND $3) AS revenue_entries,
+          (SELECT COUNT(*)::int FROM expenses WHERE company_id = $1 AND expense_date BETWEEN $2 AND $3) AS expense_entries`,
         [companyId, start, end]
       ),
 
-      // ── 1f. New customers today ──
+      // ── 1f. New Customers ──
       pool.query(
         `SELECT
            COUNT(*)::int AS new_customers,
-           COUNT(*) FILTER (WHERE status = 'Active')::int AS active_new,
+           COUNT(*) FILTER (WHERE c.status = 'Active')::int AS active_new,
            JSON_AGG(JSON_BUILD_OBJECT(
-             'id',    c.id,
-             'name',  c.name,
-             'phone', c.phone_number,
-             'registered_by', s.full_name,
-             'created_at', c.date_of_registration
+             'id', c.id, 'name', c.name, 'phone', c.phone_number,
+             'registered_by', s.full_name, 'created_at', c.date_of_registration
            ) ORDER BY c.date_of_registration DESC) AS customers_list
          FROM customers c
          LEFT JOIN staff s ON c.registered_by = s.id
-         WHERE c.company_id = $1
+         WHERE c.company_id = $1 
            AND c.date_of_registration BETWEEN $2 AND $3
            AND c.is_deleted = false`,
         [companyId, start, end]
       ),
 
-      // ── 1g. Staff activity summary ──
+      // ── 1g. Staff Activity (Fixed ambiguous status/id) ──
       pool.query(
         `SELECT
            s.id, s.full_name AS name, s.role,
-           COUNT(t.id) FILTER (WHERE t.type = 'deposit')::int           AS deposits_recorded,
+           COUNT(t.id) FILTER (WHERE t.type = 'deposit')::int AS deposits_recorded,
            COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'deposit'), 0) AS deposit_value,
            COUNT(t.id) FILTER (WHERE t.type = 'withdrawal' AND t.status IN ('approved','completed'))::int AS withdrawals_processed,
-           COUNT(cust.id)::int                                           AS customers_registered,
-           MAX(t.transaction_date)                                       AS last_activity
+           (SELECT COUNT(*)::int FROM customers WHERE registered_by = s.id AND date_of_registration BETWEEN $2 AND $3) AS customers_registered,
+           MAX(t.transaction_date) AS last_activity
          FROM staff s
-         LEFT JOIN transactions t
-           ON (t.staff_id = s.id OR t.created_by = s.id)
-           AND t.company_id = $1
-           AND t.transaction_date BETWEEN $2 AND $3
+         LEFT JOIN transactions t ON (t.staff_id = s.id OR t.created_by = s.id) 
+           AND t.transaction_date BETWEEN $2 AND $3 
            AND t.is_deleted = false
-         LEFT JOIN customers cust
-           ON cust.registered_by = s.id
-           AND cust.company_id = $1
-           AND cust.date_of_registration BETWEEN $2 AND $3
          WHERE s.company_id = $1
          GROUP BY s.id, s.full_name, s.role
          ORDER BY deposit_value DESC`,
         [companyId, start, end]
       ),
 
-      // ── 1h. Outstanding pending withdrawals ──
+      // ── 1h. Pending Withdrawals ──
       pool.query(
-        `SELECT
-           t.id, t.amount, t.transaction_date,
-           c.name AS customer_name, c.phone_number,
-           s.full_name AS requested_by,
-           a.account_type
+        `SELECT t.id, t.amount, t.transaction_date, c.name AS customer_name, s.full_name AS requested_by
          FROM transactions t
          JOIN accounts a ON t.account_id = a.id
          JOIN customers c ON a.customer_id = c.id
          LEFT JOIN staff s ON t.created_by = s.id
-         WHERE t.company_id = $1
-           AND t.type = 'withdrawal'
-           AND t.status = 'pending'
-           AND t.is_deleted = false
+         WHERE t.company_id = $1 AND t.type = 'withdrawal' AND t.status = 'pending' AND t.is_deleted = false
          ORDER BY t.transaction_date ASC`,
         [companyId]
       ),
 
-      // ── 1i. Overdue loans ──
+      // ── 1i. Overdue Loans ──
       pool.query(
         `SELECT
-           COUNT(*) FILTER (WHERE days_overdue BETWEEN 1 AND 7)::int   AS overdue_1_7_days,
-           COUNT(*) FILTER (WHERE days_overdue BETWEEN 8 AND 30)::int  AS overdue_8_30_days,
-           COUNT(*) FILTER (WHERE days_overdue > 30)::int              AS overdue_30_plus_days,
-           COALESCE(SUM(outstandingbalance) FILTER (WHERE days_overdue > 0), 0) AS total_overdue_balance
+           COUNT(*) FILTER (WHERE days_overdue BETWEEN 1 AND 7)::int AS overdue_1_7_days,
+           COUNT(*) FILTER (WHERE days_overdue BETWEEN 8 AND 30)::int AS overdue_8_30_days,
+           COUNT(*) FILTER (WHERE days_overdue > 30)::int AS overdue_30_plus_days,
+           COALESCE(SUM(outstandingbalance), 0) AS total_overdue_balance
          FROM loans
-         WHERE company_id = $1
-           AND days_overdue > 0
-           AND status = 'active'
-           AND loantype != 'group_member'`,
+         WHERE company_id = $1 AND days_overdue > 0 AND status = 'active' AND loantype != 'group_member'`,
         [companyId]
       ),
 
-      // ── 1j. Loan repayments today ──
+      // ── 1j. Loan Repayments ──
       pool.query(
-        `SELECT
-           COUNT(*)::int            AS repayment_count,
-           COALESCE(SUM(amount), 0) AS repayment_total
+        `SELECT COUNT(*)::int AS repayment_count, COALESCE(SUM(lr.amount), 0) AS repayment_total
          FROM loan_repayments lr
          JOIN loans l ON lr.loan_id = l.id
-         WHERE l.company_id = $1
-           AND lr.payment_date BETWEEN $2 AND $3`,
-        [companyId, label, label]
-      ),
-    ]);
+         WHERE l.company_id = $1 AND lr.payment_date BETWEEN $2 AND $3`,
+        [companyId, start, end]
+      )
+    ];
 
-    // ── Compose master payload ──
-    const tx      = transactionSummary.rows[0];
-    const float   = floatSummary.rows[0];
-    const loans   = loanActivity.rows[0];
-    const comm    = commissionToday.rows[0];
-    const fin     = financialsToday.rows[0];
-    const cust    = newCustomers.rows[0];
-    const pending = pendingWithdrawals.rows;
-    const overdue = overdueLoans.rows[0];
-    const repay   = repaymentToday.rows[0];
+    const results = await Promise.all(queries);
 
-    // Net position
-    const netCashPosition =
-      Number(fin.revenue_today) +
-      Number(comm.paid_amount) -
-      Number(fin.expenses_today);
+    // Destructure results
+    const [tx, float, loans, comm, fin, cust, staff, pending, overdue, repay] = results.map(r => r.rows[0] || {});
+    
+    // Manual adjustment for the Pending/Staff lists which return arrays
+    const pendingList = results[7].rows;
+    const staffList = results[6].rows;
+
+    const netCashPosition = 
+      Number(fin.revenue_today || 0) + 
+      Number(comm.paid_amount || 0) - 
+      Number(fin.expenses_today || 0);
 
     return res.status(200).json({
       status: "success",
       report_date: label,
-      generated_at: new Date().toISOString(),
-      company_id: companyId,
       data: {
-        // ── TRANSACTIONS ──
         transactions: {
-          total:              tx.total_transactions,
-          net_flow:           Number(tx.net_flow),
-          deposits:           { count: tx.deposit_count,    total: Number(tx.deposit_total) },
-          withdrawals:        { count: tx.withdrawal_count, total: Number(tx.withdrawal_total) },
-          transfers:          { count: tx.transfer_count,   total: Number(tx.transfer_total) },
-          reversals:          { count: tx.reversal_count,   total: Number(tx.reversal_total) },
-          pending_withdrawals_count: tx.pending_withdrawal_count,
+          total: tx.total_transactions,
+          net_flow: Number(tx.net_flow),
+          deposits: { count: tx.deposit_count, total: Number(tx.deposit_total) },
+          withdrawals: { count: tx.withdrawal_count, total: Number(tx.withdrawal_total) },
+          pending_count: tx.pending_withdrawal_count
         },
-
-        // ── FLOAT / TELLER POSITIONS ──
-        float: {
-          teller_count:   float.teller_count,
-          total_allocated: Number(float.total_allocated),
-          total_spent:     Number(float.total_spent),
-          total_remaining: Number(float.total_remaining),
-          active_floats:  float.active_floats,
-          closed_floats:  float.closed_floats,
-          teller_floats:  float.teller_floats || [],
-        },
-
-        // ── LOANS ──
+        float: { ...float, teller_floats: float.teller_floats || [] },
         loans: {
-          new_applications:  loans.new_applications,
-          approved_today:    loans.approved_today,
-          rejected_today:    loans.rejected_today,
-          completed_today:   loans.completed_today,
-          disbursed_today:   Number(loans.disbursed_today),
-          total_overdue:     loans.total_overdue,
-          repayments: {
-            count: repay.repayment_count,
-            total: Number(repay.repayment_total),
-          },
+          ...loans,
+          disbursed_today: Number(loans.disbursed_today),
+          repayments: { count: repay.repayment_count, total: Number(repay.repayment_total) }
         },
-
-        // ── COMMISSIONS ──
-        commissions: {
-          count:           comm.count,
-          total_earned:    Number(comm.total_earned),
-          paid_amount:     Number(comm.paid_amount),
-          reversed_amount: Number(comm.reversed_amount),
-        },
-
-        // ── FINANCIALS ──
         financials: {
-          revenue_today:   Number(fin.revenue_today),
-          expenses_today:  Number(fin.expenses_today),
-          revenue_entries: fin.revenue_entries,
-          expense_entries: fin.expense_entries,
-          net_cash_position: netCashPosition,
+          ...fin,
+          net_cash_position: netCashPosition
         },
-
-        // ── CUSTOMERS ──
         customers: {
-          new_today:  cust.new_customers,
-          active_new: cust.active_new,
-          list:       cust.customers_list || [],
+          new_today: cust.new_customers,
+          list: cust.customers_list || []
         },
-
-        // ── STAFF ACTIVITY ──
-        staff_activity: staffActivity.rows,
-
-        // ── ALERTS ──
+        staff_activity: staffList,
         alerts: {
-          pending_withdrawals: pending,
-          overdue_loans:       overdue,
-        },
-      },
+          pending_withdrawals: pendingList,
+          overdue_loans: overdue
+        }
+      }
     });
+
   } catch (error) {
-    console.error("getDayEndSummary error:", error.message);
-    return res.status(500).json({ status: "error", message: "Internal server error", detail: error.message });
+    console.error("getDayEndSummary error:", error);
+    return res.status(500).json({ status: "error", message: error.message });
   }
 };
 
@@ -665,6 +566,7 @@ export const getFinancialDayEnd = async (req, res) => {
            (SELECT COALESCE(SUM(amount), 0) FROM revenue  WHERE company_id = $1 AND payment_date BETWEEN $2 AND $3)  AS total_revenue,
            (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE company_id = $1 AND expense_date BETWEEN $2 AND $3)  AS total_expenses,
            (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE company_id = $1 AND status = 'paid' AND created_at BETWEEN $2 AND $3) AS total_commission_paid,
+           (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE company_id = $1 AND type = 'withdrawal' AND 'is_deleted' = false AND created_at BETWEEN $2 AND $3) AS total_withdrawals,
            (SELECT COALESCE(SUM(amount), 0) FROM loan_repayments lr JOIN loans l ON lr.loan_id = l.id WHERE l.company_id = $1 AND lr.payment_date = $4) AS loan_repayment_income`,
         [companyId, start, end, label]
       ),
@@ -769,6 +671,7 @@ export const getFinancialDayEnd = async (req, res) => {
 
     const pl = incomeStatement.rows[0];
     const totalIncome   = Number(pl.total_revenue) + Number(pl.total_commission_paid) + Number(pl.loan_repayment_income);
+    const totalWithdrawals = Number(pl.total_withdrawals);
     const totalExpenses = Number(pl.total_expenses);
     const netProfit     = totalIncome - totalExpenses;
 
@@ -785,6 +688,7 @@ export const getFinancialDayEnd = async (req, res) => {
           total_commission_paid:  Number(pl.total_commission_paid),
           loan_repayment_income:  Number(pl.loan_repayment_income),
           total_income:           totalIncome,
+          total_withdrawals:      totalWithdrawals,
           total_expenses:         totalExpenses,
           net_profit:             netProfit,
           profit_margin_pct:      totalIncome > 0 ? ((netProfit / totalIncome) * 100).toFixed(2) : "0.00",
