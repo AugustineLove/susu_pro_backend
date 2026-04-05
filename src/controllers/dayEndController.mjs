@@ -1338,7 +1338,8 @@ export const getDayEndAuditTrail = async (req, res) => {
 
 export const getDayEndStatus = async (req, res) => {
   const { companyId } = req.params;
-  const { label } = targetDateRange();
+  const { date } = req.query;
+  const { label } = targetDateRange(date);
   console.log(companyId);
 
   try {
