@@ -869,7 +869,12 @@ export const getHRDayEnd = async (req, res) => {
            -- loan actions
            COUNT(DISTINCT l.id) FILTER (WHERE l.created_at BETWEEN $2 AND $3)::int AS loans_created,
 
-           MAX(t.transaction_date) AS last_seen,
+           GREATEST(
+              MAX(t.transaction_date),
+              MAX(cust.created_at),
+              MAX(l.created_at),
+              MAX(s.created_at)
+          ) AS last_seen,
 
            CASE
              WHEN MAX(t.transaction_date) BETWEEN $2 AND $3 THEN 'Active'
