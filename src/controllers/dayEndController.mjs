@@ -1093,7 +1093,7 @@ export const getDayEndAuditTrail = async (req, res) => {
   const { companyId } = req.params;
   const { date, staff_id } = req.query;
   const { start, end, label } = targetDateRange(date);
-
+  console.log(`Audit trail, date: ${date}, staff_id: ${staff_id}`)
   try {
     let staffFilter = "";
     const baseParams = [companyId, start, end];
