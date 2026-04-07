@@ -272,7 +272,7 @@ export const toggleBudgetStatus = async (req, res) => {
       UPDATE budgets
       SET status = $1
       WHERE id = $2
-      RETURNING *,ki
+      RETURNING *
       `,
       [newStatus, budgetId]
     );
