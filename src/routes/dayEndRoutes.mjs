@@ -14,6 +14,8 @@ import {
   closeDay,
   getDayEndAuditTrail,
   getDayEndStatus,
+  getDayEndLogs,
+  getSingleDayEnd,
 } from "../controllers/dayEndController.mjs";
 
 const dayEndRouter = express.Router();
@@ -54,5 +56,8 @@ dayEndRouter.get("/:companyId/audit-trail", getDayEndAuditTrail);
 // POST /api/day-end/:companyId/close
 // Body: { closed_by, closed_by_name, date? }
 dayEndRouter.post("/:companyId/close", closeDay);
+
+dayEndRouter.get("/:companyId", getDayEndLogs);
+dayEndRouter.get("/:companyId/:date", getSingleDayEnd);
 
 export default dayEndRouter;

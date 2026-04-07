@@ -13,13 +13,14 @@ import {
   approveLoan,
   rejectLoan,
 } from '../controllers/loanController.mjs';
+import { checkDayNotClosed } from '../middlewares/checkDayNotClosed.mjs';
 
 const loanRoutes = express.Router();
 
 // ── Create
-loanRoutes.post('/individual',              createIndividualLoan);
-loanRoutes.post('/group',                   createGroupLoan);
-loanRoutes.post('/p2p',                     createP2PLoan);
+loanRoutes.post('/individual',   checkDayNotClosed,           createIndividualLoan);
+loanRoutes.post('/group',      checkDayNotClosed,            createGroupLoan);
+loanRoutes.post('/p2p',        checkDayNotClosed,             createP2PLoan);
 
 // ── Read
 loanRoutes.get('/',                         getLoans);                    // ?company_id=&type=&status=&page=&limit=

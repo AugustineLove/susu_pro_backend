@@ -2,11 +2,12 @@ import { Router } from "express";
 import { addSmsNumber, createCustomer, deleteCustomer, getCustomerByAccountNumber, getCustomerById, getCustomersByCompany, getCustomersByStaff, loginCustomer, removeSmsNumber, searchCustomers, toggleSendSms, udpateCustomerInfoMobile, updateCustomer } from "../controllers/customerController.mjs";
 import { requirePermission } from "../middlewares/staffPermissions.mjs";
 import { verifyCompanyToken } from "../middlewares/verifyCompany.mjs";
+import { checkDayNotClosed } from "../middlewares/checkDayNotClosed.mjs";
 
 
 export const customerRouter = Router();
 
-customerRouter.post('/create',createCustomer);
+customerRouter.post('/create', checkDayNotClosed, createCustomer);
 customerRouter.get('/staff/:staffId', getCustomersByStaff);
 customerRouter.get('/company/:companyId', getCustomersByCompany);
 customerRouter.delete('/delete', deleteCustomer);

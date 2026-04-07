@@ -965,6 +965,16 @@ export const closeDay = async (req, res) => {
   try {
     await client.query("BEGIN");
 
+    const existing = await client.query(
+      `SELECT id FROM day_end_logs 
+      WHERE company_id = $1 AND report_date = $2`,
+      [companyId, label]
+    );
+
+    if (existing.rows.length > 0) {
+      throw new Error("Day already closed for this date");
+    }
+
     // 1. Fetch all open floats for the day
     const floatRes = await client.query(
       `SELECT id, teller_id, allocated, spent, allocated - spent AS remaining, status
@@ -1322,5 +1332,128 @@ export const getDayEndStatus = async (req, res) => {
   } catch (error) {
     console.error("getDayEndStatus error:", error.message);
     return res.status(500).json({ status: "error", message: "Internal server error", detail: error.message });
+  }
+};
+
+export const getDayEndLogs = async (req, res) => {
+  const { companyId } = req.params;
+  const { date, start_date, end_date } = req.query;
+
+  if (!companyId) {
+    return res.status(400).json({
+      status: "fail",
+      message: "companyId is required",
+    });
+  }
+
+  try {
+    let query = `
+      SELECT 
+        id,
+        company_id,
+        report_date,
+        closed_by,
+        closed_by_name,
+        created_at AS closed_at,
+        total_deposits,
+        total_withdrawals,
+        pending_withdrawals,
+        total_transactions,
+        loans_approved,
+        disbursed_today,
+        commissions_paid,
+        floats_closed
+      FROM day_end_logs
+      WHERE company_id = $1
+    `;
+
+    const params = [companyId];
+    let paramIndex = 2;
+
+
+    if (date) {
+      query += ` AND report_date = $${paramIndex}`;
+      params.push(date);
+      paramIndex++;
+    }
+
+
+    if (start_date && end_date) {
+      query += ` AND report_date BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+      params.push(start_date, end_date);
+      paramIndex += 2;
+    }
+
+    query += ` ORDER BY report_date DESC`;
+
+    const result = await pool.query(query, params);
+
+    return res.status(200).json({
+      status: "success",
+      count: result.rows.length,
+      data: result.rows.map((row) => ({
+        ...row,
+        total_deposits: Number(row.total_deposits),
+        total_withdrawals: Number(row.total_withdrawals),
+        disbursed_today: Number(row.disbursed_today),
+        commissions_paid: Number(row.commissions_paid),
+      })),
+    });
+
+  } catch (error) {
+    console.error("getDayEndLogs error:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+      detail: error.message,
+    });
+  }
+};
+
+export const getSingleDayEnd = async (req, res) => {
+  const { companyId, date } = req.params;
+
+  if (!companyId || !date) {
+    return res.status(400).json({
+      status: "fail",
+      message: "companyId and date are required",
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM day_end_logs
+       WHERE company_id = $1 AND report_date = $2
+       LIMIT 1`,
+      [companyId, date]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        status: "fail",
+        message: "No record found for this date",
+      });
+    }
+
+    const row = result.rows[0];
+
+    return res.status(200).json({
+      status: "success",
+      data: {
+        ...row,
+        total_deposits: Number(row.total_deposits),
+        total_withdrawals: Number(row.total_withdrawals),
+        disbursed_today: Number(row.disbursed_today),
+        commissions_paid: Number(row.commissions_paid),
+      },
+    });
+
+  } catch (error) {
+    console.error("getSingleDayEnd error:", error.message);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+      detail: error.message,
+    });
   }
 };
