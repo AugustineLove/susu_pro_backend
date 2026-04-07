@@ -1354,7 +1354,7 @@ export const getDayEndLogs = async (req, res) => {
         report_date,
         closed_by,
         closed_by_name,
-        created_at AS closed_at,
+        closed_at,
         total_deposits,
         total_withdrawals,
         pending_withdrawals,
