@@ -1005,7 +1005,8 @@ export const closeDay = async (req, res) => {
          COALESCE(SUM(amount) FILTER (WHERE type = 'deposit' AND is_deleted = false), 0)                          AS total_deposits,
          COALESCE(SUM(amount) FILTER (WHERE type = 'withdrawal' AND status IN ('approved','completed') AND is_deleted = false), 0) AS total_withdrawals,
          COUNT(*) FILTER (WHERE type = 'withdrawal' AND status = 'pending' AND is_deleted = false)::int           AS pending_withdrawals,
-         COUNT(*) FILTER (WHERE is_deleted = false)::int                                                           AS total_transactions
+         COUNT(*) FILTER (WHERE is_deleted = false)::int                                                           AS total_transactions,
+
        FROM transactions
        WHERE company_id = $1
          AND transaction_date BETWEEN $2 AND $3`,
@@ -1029,6 +1030,18 @@ export const closeDay = async (req, res) => {
       [companyId, start, end]
     );
 
+    const repaymentSnapRes = await client.query(
+      `SELECT 
+        COALESCE(SUM(amount), 0) AS loan_repayments
+      FROM loan_repayments lr
+      JOIN loans l ON lr.loan_id = l.id
+      WHERE l.company_id = $1
+        AND lr.payment_date BETWEEN $2 AND $3`,
+      [companyId, start, end]
+    );
+
+    const rsnap = repaymentSnapRes.rows[0];
+
     const snap  = snapRes.rows[0];
     const lsnap = loanSnapRes.rows[0];
     const csnap = commSnapRes.rows[0];
@@ -1041,14 +1054,14 @@ export const closeDay = async (req, res) => {
            company_id, report_date, closed_by, closed_by_name,
            total_deposits, total_withdrawals, pending_withdrawals,
            total_transactions, loans_approved, disbursed_today,
-           commissions_paid, floats_closed
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           commissions_paid, floats_closed, loan_repayments
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING id`,
         [
           companyId, label, closed_by, closed_by_name || null,
           snap.total_deposits, snap.total_withdrawals, snap.pending_withdrawals,
           snap.total_transactions, lsnap.loans_approved, lsnap.disbursed,
-          csnap.commissions_paid, closedCount + closedFloats.length,
+          csnap.commissions_paid, closedCount + closedFloats.length, rsnap.loan_repayments
         ]
       );
       logId = logRes.rows[0]?.id;
