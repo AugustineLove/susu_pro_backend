@@ -1373,6 +1373,7 @@ export const getDayEndLogs = async (req, res) => {
         pending_withdrawals,
         total_transactions,
         loans_approved,
+        loan_repayments,
         disbursed_today,
         commissions_paid,
         floats_closed
