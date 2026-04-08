@@ -1,3 +1,5 @@
+import pool from "../db.mjs";
+
 export const checkDayNotClosed = async (req, res, next) => {
   const { company_id } = req.body;
 
