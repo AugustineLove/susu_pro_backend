@@ -1005,7 +1005,7 @@ export const closeDay = async (req, res) => {
          COALESCE(SUM(amount) FILTER (WHERE type = 'deposit' AND is_deleted = false), 0)                          AS total_deposits,
          COALESCE(SUM(amount) FILTER (WHERE type = 'withdrawal' AND status IN ('approved','completed') AND is_deleted = false), 0) AS total_withdrawals,
          COUNT(*) FILTER (WHERE type = 'withdrawal' AND status = 'pending' AND is_deleted = false)::int           AS pending_withdrawals,
-         COUNT(*) FILTER (WHERE is_deleted = false)::int                                                           AS total_transactions,
+         COUNT(*) FILTER (WHERE is_deleted = false)::int                                                           AS total_transactions
 
        FROM transactions
        WHERE company_id = $1
