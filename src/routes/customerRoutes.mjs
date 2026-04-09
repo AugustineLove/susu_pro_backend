@@ -7,7 +7,7 @@ import { checkDayNotClosed } from "../middlewares/checkDayNotClosed.mjs";
 
 export const customerRouter = Router();
 
-customerRouter.post('/create', checkDayNotClosed, createCustomer);
+customerRouter.post('/create', createCustomer);
 customerRouter.get('/staff/:staffId', getCustomersByStaff);
 customerRouter.get('/company/:companyId', getCustomersByCompany);
 customerRouter.delete('/delete', deleteCustomer);
