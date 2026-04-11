@@ -263,7 +263,7 @@ export const getRecentTransactions = async (req, res) => {
         t.withdrawal_type,
         t.payment_method,
         t.processing_status,
-        t.process_by, 
+        t.processed_by, 
         t.process_at,
         t.payment_reference,
         t.agent_note,
