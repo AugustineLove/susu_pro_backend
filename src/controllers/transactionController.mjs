@@ -261,6 +261,11 @@ export const getRecentTransactions = async (req, res) => {
         t.reversed_by,
         t.is_deleted,
         t.withdrawal_type,
+        t.payment_method,
+        t.processing_status,
+        t.process_by, 
+        t.process_at,
+        t.payment_reference,
 
         a.id AS account_id,
         a.customer_id,
