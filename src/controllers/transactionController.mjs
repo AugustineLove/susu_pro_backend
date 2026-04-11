@@ -266,6 +266,7 @@ export const getRecentTransactions = async (req, res) => {
         t.process_by, 
         t.process_at,
         t.payment_reference,
+        t.agent_note,
 
         a.id AS account_id,
         a.customer_id,
