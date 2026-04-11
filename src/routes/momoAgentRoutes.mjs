@@ -4,7 +4,7 @@ import { getPendingMomoWithdrawals, getWithdrawalById, updateWithdrawalProcessin
 const momoAgentRouter = Router();
 
 momoAgentRouter.get('/withdrawals/pending', getPendingMomoWithdrawals)
-momoAgentRouter.get('/withdrawals/:transactionId/processing-status', updateWithdrawalProcessingStatus);
+momoAgentRouter.patch('/withdrawals/:transactionId/processing-status', updateWithdrawalProcessingStatus);
 momoAgentRouter.get('/withdrawals/:transactionId', getWithdrawalById);
 
 export default momoAgentRouter;
