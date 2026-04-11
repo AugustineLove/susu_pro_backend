@@ -12,21 +12,27 @@ export const stakeMoney = async (req, res) => {
     transaction_date,
     staff_id,
     withdrawal_type,
+    payment_method, // NEW
   } = req.body;
-  console.log(`Staff ID: ${staff_id}`);
 
   if (!account_id || !amount || !staked_by || !company_id || !transaction_type) {
     return res.status(400).json({
       status: "fail",
-      message:
-        "All fields (account_id, amount, staked_by, company_id, transaction_type) are required",
+      message: "Required fields missing",
     });
   }
 
   if (!["deposit", "withdrawal"].includes(transaction_type)) {
     return res.status(400).json({
       status: "fail",
-      message: "Invalid transaction_type. Must be 'deposit' or 'withdrawal'",
+      message: "transaction_type must be 'deposit' or 'withdrawal'",
+    });
+  }
+
+  if (payment_method && !["momo", "cash", "bank"].includes(payment_method)) {
+    return res.status(400).json({
+      status: "fail",
+      message: "Invalid payment_method",
     });
   }
 
@@ -35,9 +41,10 @@ export const stakeMoney = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Fetch account details (include type for logic)
+    // 🔍 Fetch account
     const accRes = await client.query(
-      `SELECT id, balance, account_type, minimum_balance FROM accounts WHERE id = $1`,
+      `SELECT id, balance, account_type, minimum_balance, status 
+       FROM accounts WHERE id = $1`,
       [account_id]
     );
 
@@ -52,7 +59,7 @@ export const stakeMoney = async (req, res) => {
     const account = accRes.rows[0];
     const numericAmount = parseFloat(amount);
 
-    if (account.status === 'Inactive'){
+    if (account.status === "Inactive") {
       await client.query("ROLLBACK");
       return res.status(400).json({
         status: "fail",
@@ -68,24 +75,26 @@ export const stakeMoney = async (req, res) => {
       });
     }
 
-    // Check balance for withdrawal
-    if (transaction_type === "withdrawal" && numericAmount > account.balance) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        status: "insufficient_balance",
-        message: "Insufficient balance for withdrawal",
-      });
+    // 🚨 Withdrawal checks
+    if (transaction_type === "withdrawal") {
+      if (numericAmount > account.balance) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          status: "insufficient_balance",
+          message: "Insufficient balance",
+        });
+      }
+
+      if (numericAmount > account.balance - account.minimum_balance) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          status: "minimum_balance",
+          message: "Minimum balance violation",
+        });
+      }
     }
 
-    if(transaction_type === "withdrawal" && numericAmount > (account.balance - account.minimum_balance)){
-       await client.query("ROLLBACK");
-      return res.status(400).json({
-        status: "minimum_balance",
-        message: "Insufficient minimum balance for withdrawal",
-      });
-    }
-
-    // 1️⃣ Record the stake
+    // 1️⃣ Record stake
     await client.query(
       `INSERT INTO stakes (account_id, amount, staked_by)
        VALUES ($1, $2, $3)`,
@@ -93,11 +102,12 @@ export const stakeMoney = async (req, res) => {
     );
 
     let status = "completed";
+    let processing_status = null;
+
     const accountTypeLower = account.account_type.toLowerCase();
 
-    // 2️⃣ Update balance logic
+    // 2️⃣ Handle balance + statuses
     if (transaction_type === "deposit") {
-      // If account is a loan account, deduct instead
       if (accountTypeLower.includes("loan")) {
         await client.query(
           `UPDATE accounts SET balance = balance - $1 WHERE id = $2`,
@@ -109,32 +119,46 @@ export const stakeMoney = async (req, res) => {
           [numericAmount, account_id]
         );
       }
-    } else if (transaction_type === "withdrawal") {
-      // Withdrawals are always pending
-      status = "pending";
+
+      processing_status = "completed"; // deposit is instant
     }
 
-    // 3️⃣ Record the transaction (conditionally include date)
-    const insertTransactionQuery = transaction_date
+    if (transaction_type === "withdrawal") {
+      status = "pending"; // admin approval
+      processing_status = "pending"; // momo agent will handle
+    }
+
+    // 3️⃣ Insert transaction with NEW FIELDS
+    const insertQuery = transaction_date
       ? `
         INSERT INTO transactions (
-          account_id, amount, type, status, created_by, company_id, description, unique_code, transaction_date, staff_id, withdrawal_type
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        RETURNING id, account_id, amount, type, status, transaction_date
+          account_id, amount, type, status, processing_status,
+          payment_method, created_by, company_id,
+          description, unique_code, transaction_date,
+          staff_id, withdrawal_type
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        RETURNING *
       `
       : `
         INSERT INTO transactions (
-          account_id, amount, type, status, created_by, company_id, description, unique_code, staff_id, withdrawal_type
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING id, account_id, amount, type, status, transaction_date
+          account_id, amount, type, status, processing_status,
+          payment_method, created_by, company_id,
+          description, unique_code,
+          staff_id, withdrawal_type
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        RETURNING *
       `;
 
-    const transactionParams = transaction_date
+    const params = transaction_date
       ? [
           account_id,
           numericAmount,
           transaction_type,
           status,
+          processing_status,
+          payment_method || null,
           staked_by,
           company_id,
           description,
@@ -148,6 +172,8 @@ export const stakeMoney = async (req, res) => {
           numericAmount,
           transaction_type,
           status,
+          processing_status,
+          payment_method || null,
           staked_by,
           company_id,
           description,
@@ -156,20 +182,15 @@ export const stakeMoney = async (req, res) => {
           withdrawal_type,
         ];
 
-    const transactionResult = await client.query(
-      insertTransactionQuery,
-      transactionParams
+    const transactionResult = await client.query(insertQuery, params);
+
+    // 4️⃣ Update last activity
+    await client.query(
+      `UPDATE accounts SET last_activity_at = NOW() WHERE id = $1`,
+      [account_id]
     );
 
-    const updateLastActivit = await client.query(
-      `UPDATE accounts
-      SET last_activity_at = NOW()
-      WHERE id = $1;
-      `, [account_id]
-    );
-    console.log(updateLastActivit.rowCount[0])
-
-    // 4️⃣ Fetch updated account balance
+    // 5️⃣ Fetch updated account
     const updatedAccountRes = await client.query(
       `SELECT id, account_type, balance FROM accounts WHERE id = $1`,
       [account_id]
@@ -182,13 +203,15 @@ export const stakeMoney = async (req, res) => {
       message:
         transaction_type === "deposit"
           ? "Deposit successful"
-          : "Withdrawal request submitted for approval",
+          : "Withdrawal request submitted",
       transaction: transactionResult.rows[0],
       updatedAccount: updatedAccountRes.rows[0],
     });
+
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("Error in stakeMoney:", error.message);
+    console.error("Error in stakeMoney:", error);
+
     return res.status(500).json({
       status: "error",
       message: "Internal server error",
