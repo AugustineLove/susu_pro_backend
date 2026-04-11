@@ -120,7 +120,7 @@ export const stakeMoney = async (req, res) => {
         );
       }
 
-      processing_status = "sent"; // deposit is instant
+      processing_status = "paid"; // deposit is instant
     }
 
     if (transaction_type === "withdrawal") {
@@ -128,7 +128,7 @@ export const stakeMoney = async (req, res) => {
       if(payment_method === "momo"){
         processing_status = "pending"; // momo agent will handle
       } else{
-        processing_status = "sent"
+        processing_status = "paid"
       }
     }
 

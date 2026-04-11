@@ -54,7 +54,7 @@ export const updateWithdrawalProcessingStatus = async (req, res) => {
   const { transactionId } = req.params;
   const { processing_status, agent_note, agent_id } = req.body;
 
-  const allowed = ["sent", "failed"];
+  const allowed = ["paid", "failed"];
   if (!processing_status || !allowed.includes(processing_status)) {
     return res.status(400).json({
       status: "fail",
