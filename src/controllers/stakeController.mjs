@@ -120,7 +120,7 @@ export const stakeMoney = async (req, res) => {
         );
       }
 
-      processing_status = "completed"; // deposit is instant
+      processing_status = "sent"; // deposit is instant
     }
 
     if (transaction_type === "withdrawal") {
