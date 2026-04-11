@@ -89,6 +89,12 @@ export const getWithdrawals = async (req, res) => {
         t.reversed_at,
         t.reversal_reason,
         t.withdrawal_type,
+        t.payment_method,
+        t.processing_status,
+        t.processed_by, 
+        t.processed_at,
+        t.payment_reference,
+        t.agent_note,
 
         a.id AS account_id,
         a.account_type,
