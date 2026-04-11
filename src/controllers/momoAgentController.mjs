@@ -1,3 +1,5 @@
+import pool from "../db.mjs";
+
 export const getPendingMomoWithdrawals = async (req, res) => {
   const { company_id } = req.query;
 
