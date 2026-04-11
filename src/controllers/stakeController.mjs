@@ -125,7 +125,11 @@ export const stakeMoney = async (req, res) => {
 
     if (transaction_type === "withdrawal") {
       status = "pending"; // admin approval
-      processing_status = "pending"; // momo agent will handle
+      if(payment_method === "momo"){
+        processing_status = "pending"; // momo agent will handle
+      } else{
+        processing_status = "sent"
+      }
     }
 
     // 3️⃣ Insert transaction with NEW FIELDS
