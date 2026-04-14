@@ -33,6 +33,8 @@ export const getPendingMomoWithdrawals = async (req, res) => {
          AND t.type = 'withdrawal'
          AND t.payment_method = 'momo'
          AND t.is_deleted = false
+         AND t.transaction_date >= CURRENT_DATE
+        AND t.transaction_date < CURRENT_DATE + INTERVAL '1 day'
        ORDER BY t.transaction_date ASC`,
       [company_id]
     );
