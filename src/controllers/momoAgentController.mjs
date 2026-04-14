@@ -18,6 +18,7 @@ export const getPendingMomoWithdrawals = async (req, res) => {
         t.payment_method,
         t.transaction_date,
         t.unique_code,
+        t.description,
 
         a.id AS account_id,
         a.account_number,
