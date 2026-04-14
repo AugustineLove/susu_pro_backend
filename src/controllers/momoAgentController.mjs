@@ -31,7 +31,6 @@ export const getPendingMomoWithdrawals = async (req, res) => {
        JOIN customers c ON a.customer_id = c.id
        WHERE t.company_id = $1
          AND t.type = 'withdrawal'
-         AND t.status = 'pending'
          AND t.payment_method = 'momo'
          AND t.is_deleted = false
        ORDER BY t.transaction_date ASC`,
