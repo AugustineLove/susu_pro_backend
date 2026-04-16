@@ -113,20 +113,40 @@ export const getAccountsByCustomer = async (req, res) => {
 
     // 2. Get summary (NEW)
     const summary = await pool.query(
-      `SELECT
-         COALESCE(SUM(CASE 
-           WHEN t.type = 'deposit' THEN t.amount 
-           ELSE 0 END), 0) AS total_deposits,
+  `SELECT
+     -- Deposits
+     COALESCE(SUM(CASE 
+       WHEN t.type = 'deposit' THEN t.amount 
+       ELSE 0 END), 0) AS total_deposits,
 
-         COALESCE(SUM(CASE 
-           WHEN t.type = 'withdrawal' THEN t.amount 
-           ELSE 0 END), 0) AS total_withdrawals
+     -- Withdrawals
+     COALESCE(SUM(CASE 
+       WHEN t.type = 'withdrawal' THEN t.amount 
+       ELSE 0 END), 0) AS total_withdrawals,
 
-       FROM transactions t
-       INNER JOIN accounts a ON t.account_id = a.id
-       WHERE a.customer_id = $1`,
-      [customerId]
-    );
+     -- Transfer In
+     COALESCE(SUM(CASE 
+       WHEN t.type = 'transfer_in' THEN t.amount 
+       ELSE 0 END), 0) AS total_transfer_ins,
+
+     -- Transfer Out
+     COALESCE(SUM(CASE 
+       WHEN t.type = 'transfer_out' THEN t.amount 
+       ELSE 0 END), 0) AS total_transfer_outs,
+
+     -- Commissions (separate subquery to avoid duplication)
+     (
+       SELECT COALESCE(SUM(c.amount), 0)
+       FROM commissions c
+       INNER JOIN accounts a2 ON c.account_id = a2.id
+       WHERE a2.customer_id = $1
+     ) AS total_commissions
+
+   FROM transactions t
+   INNER JOIN accounts a ON t.account_id = a.id
+   WHERE a.customer_id = $1`,
+  [customerId]
+);
 
     // 3. Total balance (optional but useful)
     const balance = await pool.query(
@@ -143,6 +163,9 @@ export const getAccountsByCustomer = async (req, res) => {
         totalDeposits: Number(summary.rows[0].total_deposits),
         totalWithdrawals: Number(summary.rows[0].total_withdrawals),
         totalBalance: Number(balance.rows[0].total_balance),
+        totalTransferIns: Number(summary.rows[0].total_transfer_ins),
+        totalTransferOuts: Number(summary.rows[0].total_transfer_outs),
+        totalCommissions: Number(summary.rows[0].total_commissions),
       },
     });
 
