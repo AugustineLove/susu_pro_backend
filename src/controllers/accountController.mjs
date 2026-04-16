@@ -95,7 +95,6 @@ export const createAccount = async (req, res) => {
 
 export const getAccountsByCustomer = async (req, res) => {
   const { customerId } = req.params;
-
   try {
     // 1. Get accounts (UNCHANGED)
     const accounts = await pool.query(
@@ -116,11 +115,11 @@ export const getAccountsByCustomer = async (req, res) => {
     const summary = await pool.query(
       `SELECT
          COALESCE(SUM(CASE 
-           WHEN t.transaction_type = 'deposit' THEN t.amount 
+           WHEN t.type = 'deposit' THEN t.amount 
            ELSE 0 END), 0) AS total_deposits,
 
          COALESCE(SUM(CASE 
-           WHEN t.transaction_type = 'withdrawal' THEN t.amount 
+           WHEN t.type = 'withdrawal' THEN t.amount 
            ELSE 0 END), 0) AS total_withdrawals
 
        FROM transactions t
@@ -136,14 +135,10 @@ export const getAccountsByCustomer = async (req, res) => {
        WHERE customer_id = $1`,
       [customerId]
     );
-
-    // 4. Response (ONLY ADDING, not changing existing structure)
     return res.status(200).json({
       status: 'success',
       results: accounts.rowCount,
       data: accounts.rows,
-
-      // ✅ NEW FIELD (frontend won't break)
       summary: {
         totalDeposits: Number(summary.rows[0].total_deposits),
         totalWithdrawals: Number(summary.rows[0].total_withdrawals),
