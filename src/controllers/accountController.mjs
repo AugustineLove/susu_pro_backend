@@ -116,22 +116,22 @@ export const getAccountsByCustomer = async (req, res) => {
   `SELECT
      -- Deposits
      COALESCE(SUM(CASE 
-       WHEN t.type = 'deposit' AND is_deleted = false THEN t.amount 
+       WHEN t.type = 'deposit' AND t.is_deleted = false THEN t.amount 
        ELSE 0 END), 0) AS total_deposits,
 
      -- Withdrawals
      COALESCE(SUM(CASE 
-       WHEN t.type = 'withdrawal' AND is_deleted = false THEN t.amount 
+       WHEN t.type = 'withdrawal' AND t.is_deleted = false THEN t.amount 
        ELSE 0 END), 0) AS total_withdrawals,
 
      -- Transfer In
      COALESCE(SUM(CASE 
-       WHEN t.type = 'transfer_in' AND is_deleted = false THEN t.amount 
+       WHEN t.type = 'transfer_in' AND t.is_deleted = false THEN t.amount 
        ELSE 0 END), 0) AS total_transfer_ins,
 
      -- Transfer Out
      COALESCE(SUM(CASE 
-       WHEN t.type = 'transfer_out' AND is_deleted = false THEN t.amount 
+       WHEN t.type = 'transfer_out' AND t.is_deleted = false THEN t.amount 
        ELSE 0 END), 0) AS total_transfer_outs,
 
      -- Commissions (separate subquery to avoid duplication)
