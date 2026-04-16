@@ -95,11 +95,11 @@ export const createAccount = async (req, res) => {
 
 export const getAccountsByCustomer = async (req, res) => {
   const { customerId } = req.params;
-  console.log(customerId);
+
   try {
+    // 1. Get accounts (UNCHANGED)
     const accounts = await pool.query(
-      `SELECT 
-         *
+      `SELECT * 
        FROM accounts 
        WHERE customer_id = $1`,
       [customerId]
@@ -112,11 +112,45 @@ export const getAccountsByCustomer = async (req, res) => {
       });
     }
 
+    // 2. Get summary (NEW)
+    const summary = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE 
+           WHEN t.transaction_type = 'deposit' THEN t.amount 
+           ELSE 0 END), 0) AS total_deposits,
+
+         COALESCE(SUM(CASE 
+           WHEN t.transaction_type = 'withdrawal' THEN t.amount 
+           ELSE 0 END), 0) AS total_withdrawals
+
+       FROM transactions t
+       INNER JOIN accounts a ON t.account_id = a.id
+       WHERE a.customer_id = $1`,
+      [customerId]
+    );
+
+    // 3. Total balance (optional but useful)
+    const balance = await pool.query(
+      `SELECT COALESCE(SUM(balance), 0) AS total_balance
+       FROM accounts
+       WHERE customer_id = $1`,
+      [customerId]
+    );
+
+    // 4. Response (ONLY ADDING, not changing existing structure)
     return res.status(200).json({
       status: 'success',
       results: accounts.rowCount,
       data: accounts.rows,
+
+      // ✅ NEW FIELD (frontend won't break)
+      summary: {
+        totalDeposits: Number(summary.rows[0].total_deposits),
+        totalWithdrawals: Number(summary.rows[0].total_withdrawals),
+        totalBalance: Number(balance.rows[0].total_balance),
+      },
     });
+
   } catch (error) {
     console.error('Error fetching customer accounts:', error.message);
     return res.status(500).json({
