@@ -198,133 +198,103 @@ export const getCustomersByStaff = async (req, res) => {
 export const getCustomersByCompany = async (req, res) => {
   try {
     const { companyId } = req.params;
-    const page   = parseInt(req.query.page)  || 1;
-    const limit  = parseInt(req.query.limit) || 20;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
+    console.log(page);
+    // Pull search/filter params from query string
+    const { search, location, status, staff, dateRange, startDate, endDate } = req.query;
 
-    // ── Destructure every filter field ──────────────────────────────────
-    const {
-      // Identity
-      name, phone_number, email, account_number, id_card, momo_number,
-      // Demographics
-      gender, status, location, city,
-      // Registration
-      registered_by_name, date_from, date_to, date_of_birth,
-      // Financial
-      daily_rate_min, daily_rate_max, balance_min, balance_max,
-    } = req.query;
-
-    // ── Build WHERE conditions ───────────────────────────────────────────
-    const whereConditions = ['c.company_id = $1', 'c.is_deleted = false'];
-    const values          = [companyId];
-    let   p               = 2;   // next param index
-
-    // Helper — appends an ILIKE condition (partial match, case-insensitive)
-    const ilike = (col, val) => {
-      whereConditions.push(`${col} ILIKE $${p++}`);
-      values.push(`%${val}%`);
-    };
-
-    // Helper — appends an exact equality condition
-    const exact = (col, val) => {
-      whereConditions.push(`${col} = $${p++}`);
-      values.push(val);
-    };
-
-    // Identity — partial match makes sense for free-text fields
-    if (name)           ilike('c.name',           name);
-    if (phone_number)   ilike('c.phone_number',   phone_number);
-    if (email)          ilike('c.email',          email);
-    if (account_number) ilike('c.account_number', account_number);
-    if (id_card)        ilike('c.id_card',        id_card);
-    if (momo_number)    ilike('c.momo_number',    momo_number);
-
-    // Demographics
-    if (gender)   exact('c.gender',   gender);
-    if (status)   exact('c.status',   status);
-    if (location) ilike('c.location', location);
-    if (city)     ilike('c.city',     city);
-
-    // Registration — staff name is partial, dates are range bounds
-    if (registered_by_name) ilike('s.full_name', registered_by_name);
-
-    if (date_from && date_to) {
-      whereConditions.push(`c.date_of_registration BETWEEN $${p} AND $${p + 1}`);
-      values.push(formatStartDate(date_from), formatEndDate(date_to));
-      p += 2;
-    } else if (date_from) {
-      whereConditions.push(`c.date_of_registration >= $${p++}`);
-      values.push(formatStartDate(date_from));
-    } else if (date_to) {
-      whereConditions.push(`c.date_of_registration <= $${p++}`);
-      values.push(formatEndDate(date_to));
+    console.log(startDate, endDate, location, search)
+    // Build dynamic WHERE clauses and values array
+    let whereConditions = ['c.company_id = $1', 'c.is_deleted = false'];
+    const values = [companyId];
+    let paramIndex = 2;
+    // Search condition
+    if (search) {
+      whereConditions.push(`(
+        c.name ILIKE $${paramIndex} OR
+        c.email ILIKE $${paramIndex} OR
+        c.phone_number ILIKE $${paramIndex} OR
+        c.account_number ILIKE $${paramIndex} OR
+        c.location ILIKE $${paramIndex}
+      )`);
+      values.push(`%${search}%`);
+      paramIndex++;
     }
 
-    if (date_of_birth) {
-      exact('c.date_of_birth', date_of_birth);
+    // Location filter
+    if (location && location !== 'all') {
+      whereConditions.push(`c.location = $${paramIndex}`);
+      values.push(location);
+      paramIndex++;
     }
 
-    // Financial — range filters using HAVING (balance is aggregated)
-    // daily_rate is on the customers row so it can go in WHERE
-    if (daily_rate_min) {
-      whereConditions.push(`c.daily_rate >= $${p++}`);
-      values.push(parseFloat(daily_rate_min));
-    }
-    if (daily_rate_max) {
-      whereConditions.push(`c.daily_rate <= $${p++}`);
-      values.push(parseFloat(daily_rate_max));
+    // Status filter
+    if (status && status !== 'all') {
+      whereConditions.push(`c.status = $${paramIndex}`);
+      values.push(status);
+      paramIndex++;
     }
 
-    // ── HAVING clause for aggregated balance ────────────────────────────
-    // balance_min / balance_max filter on the SUM computed in the SELECT,
-    // so they must live in HAVING, not WHERE.
-    const havingConditions = [];
-    if (balance_min) {
-      havingConditions.push(`COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0) >= $${p++}`);
-      values.push(parseFloat(balance_min));
-    }
-    if (balance_max) {
-      havingConditions.push(`COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0) <= $${p++}`);
-      values.push(parseFloat(balance_max));
+    // Staff filter
+    if (staff && staff !== 'all') {
+      whereConditions.push(`s.full_name = $${paramIndex}`);
+      values.push(staff);
+      paramIndex++;
     }
 
-    const whereClause  = 'WHERE '  + whereConditions.join(' AND ');
-    const havingClause = havingConditions.length > 0
-      ? 'HAVING ' + havingConditions.join(' AND ')
+    // Date range filter
+    if (dateRange && dateRange !== 'all') {
+      if(dateRange === 'custom' && startDate && endDate){
+        whereConditions.push(`c.date_of_registration BETWEEN $${paramIndex} AND $${ paramIndex+ 1}`)
+        values.push(formatStartDate(startDate), formatEndDate(endDate));
+        paramIndex += 2;
+      } else {
+        const fromDate = getDateFromRange(dateRange);
+        if (fromDate) {
+          whereConditions.push(`c.date_of_registration >= $${paramIndex}`);
+          values.push(fromDate.toISOString());
+          paramIndex++;
+        }
+      }
+    }
+
+    // Build WHERE clause
+    const whereClause = whereConditions.length > 0 
+      ? 'WHERE ' + whereConditions.join(' AND ')
       : '';
 
-    // ── Count query ─────────────────────────────────────────────────────
-    // Wrap in a subquery so HAVING applies before counting
+    // Determine if this is a search operation
+    const isSearching = !!(search || (location && location !== 'all') || 
+                          (status && status !== 'all') || (staff && staff !== 'all') || 
+                          (dateRange && dateRange !== 'all'));
+
+    // Get total count first (with exact same conditions)
     const countQuery = `
-      SELECT COUNT(*) AS total FROM (
-        SELECT c.id
-        FROM customers c
-        JOIN staff s ON c.registered_by = s.id
-        LEFT JOIN accounts a ON c.id = a.customer_id
-        ${whereClause}
-        GROUP BY c.id
-        ${havingClause}
-      ) sub
+      SELECT COUNT(DISTINCT c.id) as total
+      FROM customers c
+      JOIN staff s ON c.registered_by = s.id
+      ${whereClause}
     `;
 
     const countResult = await pool.query(countQuery, values);
-    const total       = parseInt(countResult.rows[0].total, 10);
-    const totalPages  = Math.ceil(total / limit) || 1;
+    const total = parseInt(countResult.rows[0].total, 10);
 
-    // ── Main query — always paginated ───────────────────────────────────
-    const mainQuery = `
+    // Build main query with pagination
+    let mainQuery = `
       SELECT
-        c.id                  AS customer_id,
+        c.id AS customer_id,
         c.name,
         c.phone_number,
         c.account_number,
         c.momo_number,
         c.email,
         c.location,
-        c.city,
         c.daily_rate,
         c.next_of_kin,
         c.id_card,
+        c.city,
         c.registered_by,
         c.date_of_birth,
         c.withdrawal_code,
@@ -332,59 +302,67 @@ export const getCustomersByCompany = async (req, res) => {
         c.gender,
         c.status,
         c.date_of_registration,
-        c.send_sms,
-        c.sms_numbers,
         s.full_name AS registered_by_name,
-        COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0)
-          AS total_balance_across_all_accounts,
+        COALESCE(SUM(CASE WHEN a.account_type NOT ILIKE '%loan%' THEN a.balance ELSE 0 END), 0) AS total_balance_across_all_accounts,
         COALESCE(
           JSON_AGG(
             JSON_BUILD_OBJECT(
-              'account_id',  a.id,
+              'account_id', a.id,
               'account_type', a.account_type,
-              'balance',     a.balance,
-              'created_at',  a.created_at
-            ) ORDER BY a.created_at
+              'balance', a.balance,
+              'created_at', a.created_at
+            )
+            ORDER BY a.created_at
           ) FILTER (WHERE a.id IS NOT NULL),
           '[]'
         ) AS accounts
       FROM customers c
-      JOIN  staff    s ON c.registered_by = s.id
+      JOIN staff s ON c.registered_by = s.id
       LEFT JOIN accounts a ON c.id = a.customer_id
       ${whereClause}
       GROUP BY c.id, s.full_name
-      ${havingClause}
       ORDER BY c.name
-      LIMIT  $${p}
-      OFFSET $${p + 1}
     `;
 
-    values.push(limit, offset);
+    // Add pagination only if not searching
+    const queryValues = [...values];
+    if (!isSearching) {
+      mainQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      queryValues.push(limit, offset);
+    }
 
+    // Execute main query
     const result = await pool.query({
-      text:              mainQuery,
-      values,
-      statement_timeout: 30000,
+      text: mainQuery,
+      values: queryValues,
+      statement_timeout: 120000
     });
 
+    // Calculate response metadata
+    const responsePage = isSearching ? 1 : page;
+    const responseLimit = isSearching ? total : limit;
+    const totalPages = isSearching ? 1 : Math.ceil(total / limit);
+
     return res.status(200).json({
-      status:     'success',
-      page,
-      limit,
+      status: 'success',
+      page: responsePage,
+      limit: responseLimit,
       total,
       totalPages,
-      data:       result.rows,
+      isSearching,
+      data: result.rows,
     });
 
   } catch (error) {
     console.error('Error fetching customers:', error.message);
-    return res.status(500).json({
-      status:  'error',
+    return res.status(500).json({ 
+      status: 'error', 
       message: 'Internal server error',
-      error:   process.env.NODE_ENV === 'development' ? error.message : undefined,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
+
 // Helper function to calculate date ranges
 function getDateFromRange(dateRange) {
   const now = new Date();
