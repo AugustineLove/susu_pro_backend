@@ -4,12 +4,17 @@ import { requirePermission } from "../middlewares/staffPermissions.mjs";
 import { verifyCompanyToken } from "../middlewares/verifyCompany.mjs";
 import { checkDayNotClosed } from "../middlewares/checkDayNotClosed.mjs";
 import { generateCustomerStatement } from "../controllers/customerAccountStatementController.mjs";
+import { getCustomerAccounts, getCustomerCardReplacements, searchCustomer, updateCardReplacementStatus } from "../controllers/accountController.mjs";
 
 
 export const customerRouter = Router();
 
 customerRouter.post('/create', createCustomer);
 customerRouter.get('/staff/:staffId', getCustomersByStaff);
+customerRouter.get('/search', searchCustomer);
+customerRouter.get('/:customerId/accounts', getCustomerAccounts);
+customerRouter.get('/:customerId/card-replacements', getCustomerCardReplacements);
+customerRouter.put('/card-replacements/:replacementId/status', updateCardReplacementStatus);
 customerRouter.get('/company/:companyId', getCustomersByCompany);
 customerRouter.get('/:customerId/statement', generateCustomerStatement);
 customerRouter.delete('/delete', deleteCustomer);

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createAccount, getAccountsByCustomer, getAllCompanyAccounts, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber, toggleAccountStatus } from "../controllers/accountController.mjs";
+import { createAccount, getAccountsByCustomer, getAllCompanyAccounts, getCardReplacements, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber, requestCardReplacement, searchAccountByNumber, toggleAccountStatus } from "../controllers/accountController.mjs";
 import { authenticateToken } from "../middlewares/authenticateToken.mjs";
 import { replaceAccountCard, unlockAccount, updateAccountSettings, verifyTransactionPin } from "../controllers/accountSettingsController.mjs";
 import { generateAccountStatement } from "../controllers/customerAccountStatementController.mjs";
@@ -18,6 +18,10 @@ accountRouter.get(
 );
 accountRouter.get('/last-customer-account-number/:staffId', getLastCustomerAccountNumber);
 accountRouter.get('/:accountNumber/statement', generateAccountStatement);
+
+accountRouter.get('/search', searchAccountByNumber);
+accountRouter.get('/:accountId/card-replacements', getCardReplacements);
+accountRouter.post('/:accountId/card/replace-with-record', requestCardReplacement);
 accountRouter.patch('/:accountId/toggle-status', toggleAccountStatus);
 accountRouter.patch(
   "/:accountId/settings",
