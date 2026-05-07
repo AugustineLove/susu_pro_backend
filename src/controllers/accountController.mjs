@@ -613,39 +613,39 @@ export const requestCardReplacement = async (req, res) => {
     );
 
     // 5️⃣ If fee is charged, create a transaction for it
-    let feeTransaction = null;
-    if (fee_charged > 0) {
-      const { rows: feeRows } = await client.query(
-        `INSERT INTO transactions (
-          account_id,
-          company_id,
-          type,
-          amount,
-          description,
-          created_by,
-          created_by_type,
-          status,
-          transaction_date
-        ) VALUES ($1, $2, 'fee', $3, $4, $5, 'staff', 'completed', NOW())
-        RETURNING *`,
-        [
-          accountId,
-          companyId,
-          fee_charged,
-          `Card replacement fee - Request #${replacement.id}`,
-          staffId
-        ]
-      );
-      feeTransaction = feeRows[0];
+    // let feeTransaction = null;
+    // if (fee_charged > 0) {
+    //   const { rows: feeRows } = await client.query(
+    //     `INSERT INTO transactions (
+    //       account_id,
+    //       company_id,
+    //       type,
+    //       amount,
+    //       description,
+    //       created_by,
+    //       created_by_type,
+    //       status,
+    //       transaction_date
+    //     ) VALUES ($1, $2, 'fee', $3, $4, $5, 'staff', 'completed', NOW())
+    //     RETURNING *`,
+    //     [
+    //       accountId,
+    //       companyId,
+    //       fee_charged,
+    //       `Card replacement fee - Request #${replacement.id}`,
+    //       staffId
+    //     ]
+    //   );
+    //   feeTransaction = feeRows[0];
 
-      // Update the replacement record with fee transaction ID
-      await client.query(
-        `UPDATE card_replacements 
-         SET fee_transaction_id = $1 
-         WHERE id = $2`,
-        [feeTransaction.id, replacement.id]
-      );
-    }
+    //   // Update the replacement record with fee transaction ID
+    //   await client.query(
+    //     `UPDATE card_replacements 
+    //      SET fee_transaction_id = $1 
+    //      WHERE id = $2`,
+    //     [feeTransaction.id, replacement.id]
+    //   );
+    // }
 
     await client.query("COMMIT");
 
