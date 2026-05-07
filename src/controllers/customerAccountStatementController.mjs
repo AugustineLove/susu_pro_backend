@@ -1,5 +1,20 @@
 import pool from "../db.mjs";
-import { formatStartDate } from "./transactionController.mjs";
+
+
+
+export const formatStartDate = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+};
+
+// Format end date to end of the day
+export const formatEndDate = (date) => {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d.toISOString();
+};
+
 
 export const generateAccountStatement = async (req, res) => {
   const { accountNumber } = req.params; // Changed from accountId to accountNumber
