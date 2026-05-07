@@ -141,57 +141,44 @@ export const generateAccountStatement = async (req, res) => {
     let openingBalance = 0;
     let openingBalanceDate = null;
 
-    if (startDate) {
-      const openingBalanceQuery = `
-        SELECT 
-          COALESCE(SUM(
-            CASE 
-              WHEN t.type = 'deposit' THEN t.amount
-              WHEN t.type = 'transfer_in' THEN t.amount
-              WHEN t.type = 'withdrawal' THEN -t.amount
-              WHEN t.type = 'transfer_out' THEN -t.amount
-              WHEN t.type = 'commission' THEN -t.amount
-              ELSE 0
-            END
-          ), 0) AS net_change
-        FROM transactions t
-        WHERE t.account_id = $1
-          AND t.transaction_date < $2
-          AND t.is_deleted = false
-          AND t.status IN ('approved', 'completed')
-      `;
-      
-      const openingResult = await client.query(openingBalanceQuery, [accountId, formatStartDate(startDate)]);
-      const netChange = parseFloat(openingResult.rows[0].net_change);
-      
-      // Calculate opening balance = current balance - net change during period
-      openingBalance = parseFloat(account.current_balance) - netChange;
-      openingBalanceDate = formatStartDate(startDate);
+if (startDate) {
+  // Get the last transaction BEFORE the start date to get the balance at that time
+  const lastTransactionBeforeStartQuery = `
+    SELECT 
+      t.*,
+      COALESCE(SUM(
+        CASE 
+          WHEN t2.type = 'deposit' THEN t2.amount
+          WHEN t2.type = 'transfer_in' THEN t2.amount
+          WHEN t2.type = 'withdrawal' THEN -t2.amount
+          WHEN t2.type = 'transfer_out' THEN -t2.amount
+          WHEN t2.type = 'commission' THEN -t2.amount
+          ELSE 0
+          END
+        ) OVER (ORDER BY t2.transaction_date), 0) AS running_balance
+      FROM transactions t
+      CROSS JOIN transactions t2
+      WHERE t.account_id = $1
+        AND t.transaction_date < $2
+        AND t.is_deleted = false
+        AND t.status IN ('approved', 'completed')
+      ORDER BY t.transaction_date DESC
+      LIMIT 1
+    `;
+    
+    const lastTxResult = await client.query(lastTransactionBeforeStartQuery, [accountId, formatStartDate(startDate)]);
+    
+    if (lastTxResult.rows.length > 0) {
+      openingBalance = parseFloat(lastTxResult.rows[0].running_balance);
     } else {
-      // If no start date, get the earliest balance or initial balance
-      const earliestBalanceQuery = `
-        SELECT 
-          COALESCE(SUM(
-            CASE 
-              WHEN t.type = 'deposit' THEN t.amount
-              WHEN t.type = 'transfer_in' THEN t.amount
-              WHEN t.type = 'withdrawal' THEN -t.amount
-              WHEN t.type = 'transfer_out' THEN -t.amount
-              WHEN t.type = 'commission' THEN -t.amount
-              ELSE 0
-            END
-          ), 0) AS total_net_change
-        FROM transactions t
-        WHERE t.account_id = $1
-          AND t.is_deleted = false
-          AND t.status IN ('approved', 'completed')
-      `;
-      
-      const totalResult = await client.query(earliestBalanceQuery, [accountId]);
-      const totalNetChange = parseFloat(totalResult.rows[0].total_net_change);
-      
-      openingBalance = parseFloat(account.current_balance) - totalNetChange;
+      // No transactions before start date, opening balance is 0
+      openingBalance = 0;
     }
+    openingBalanceDate = formatStartDate(startDate);
+  } else {
+    // If no start date, opening balance is 0
+    openingBalance = 0;
+  }
 
     // 4️⃣ Get all transactions for the statement
     const transactionsQuery = `
