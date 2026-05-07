@@ -17,7 +17,7 @@ export const formatEndDate = (date) => {
 
 
 export const generateAccountStatement = async (req, res) => {
-  const { accountNumber } = req.params; // Changed from accountId to accountNumber
+  const { accountNumber } = req.params;
   const {
     startDate,
     endDate,
@@ -86,9 +86,45 @@ export const generateAccountStatement = async (req, res) => {
     }
 
     const account = accountResult.rows[0];
-    const accountId = account.id; // Get the actual account ID
+    const accountId = account.id;
 
-    // 2️⃣ Build transaction filter conditions
+    // Format dates for filtering
+    const formattedStartDate = startDate ? formatStartDate(startDate) : null;
+    const formattedEndDate = endDate ? formatEndDate(endDate) : null;
+
+    // 2️⃣ Get opening balance (balance before start date)
+    let openingBalance = 0;
+    let openingBalanceDate = null;
+
+    if (formattedStartDate) {
+      // Simple query to sum all transactions BEFORE the start date
+      const openingBalanceQuery = `
+        SELECT 
+          COALESCE(SUM(
+            CASE 
+              WHEN t.type = 'deposit' THEN t.amount
+              WHEN t.type = 'transfer_in' THEN t.amount
+              WHEN t.type = 'withdrawal' THEN -t.amount
+              WHEN t.type = 'transfer_out' THEN -t.amount
+              WHEN t.type = 'commission' THEN -t.amount
+              ELSE 0
+            END
+          ), 0) AS balance
+        FROM transactions t
+        WHERE t.account_id = $1
+          AND t.transaction_date < $2
+          AND t.is_deleted = false
+          AND t.status IN ('approved', 'completed')
+      `;
+      
+      const openingResult = await client.query(openingBalanceQuery, [accountId, formattedStartDate]);
+      openingBalance = parseFloat(openingResult.rows[0].balance);
+      openingBalanceDate = formattedStartDate;
+      
+      console.log(`Opening balance before ${formattedStartDate}: ${openingBalance}`);
+    }
+
+    // 3️⃣ Build transaction filter conditions
     let whereConditions = [
       't.account_id = $1',
       't.is_deleted = false'
@@ -97,18 +133,18 @@ export const generateAccountStatement = async (req, res) => {
     const queryParams = [accountId];
     let paramIndex = 2;
 
-    // Date range filtering
-    if (startDate && endDate) {
+    // Date range filtering - IMPORTANT: Use the formatted dates
+    if (formattedStartDate && formattedEndDate) {
       whereConditions.push(`t.transaction_date BETWEEN $${paramIndex} AND $${paramIndex + 1}`);
-      queryParams.push(formatStartDate(startDate), formatEndDate(endDate));
+      queryParams.push(formattedStartDate, formattedEndDate);
       paramIndex += 2;
-    } else if (startDate) {
+    } else if (formattedStartDate) {
       whereConditions.push(`t.transaction_date >= $${paramIndex}`);
-      queryParams.push(formatStartDate(startDate));
+      queryParams.push(formattedStartDate);
       paramIndex++;
-    } else if (endDate) {
+    } else if (formattedEndDate) {
       whereConditions.push(`t.transaction_date <= $${paramIndex}`);
-      queryParams.push(formatEndDate(endDate));
+      queryParams.push(formattedEndDate);
       paramIndex++;
     }
 
@@ -130,57 +166,13 @@ export const generateAccountStatement = async (req, res) => {
           whereConditions.push(`t.type IN ('transfer_in', 'transfer_out')`);
           break;
         default:
-          // 'all' - no filter
           break;
       }
     }
 
     const whereClause = whereConditions.join(' AND ');
 
-    // 3️⃣ Get opening balance (balance before start date)
-    let openingBalance = 0;
-    let openingBalanceDate = null;
-
-if (startDate) {
-  // Get the last transaction BEFORE the start date to get the balance at that time
-  const lastTransactionBeforeStartQuery = `
-    SELECT 
-      t.*,
-      COALESCE(SUM(
-        CASE 
-          WHEN t2.type = 'deposit' THEN t2.amount
-          WHEN t2.type = 'transfer_in' THEN t2.amount
-          WHEN t2.type = 'withdrawal' THEN -t2.amount
-          WHEN t2.type = 'transfer_out' THEN -t2.amount
-          WHEN t2.type = 'commission' THEN -t2.amount
-          ELSE 0
-          END
-        ) OVER (ORDER BY t2.transaction_date), 0) AS running_balance
-      FROM transactions t
-      CROSS JOIN transactions t2
-      WHERE t.account_id = $1
-        AND t.transaction_date < $2
-        AND t.is_deleted = false
-        AND t.status IN ('approved', 'completed')
-      ORDER BY t.transaction_date DESC
-      LIMIT 1
-    `;
-    
-    const lastTxResult = await client.query(lastTransactionBeforeStartQuery, [accountId, formatStartDate(startDate)]);
-    
-    if (lastTxResult.rows.length > 0) {
-      openingBalance = parseFloat(lastTxResult.rows[0].running_balance);
-    } else {
-      // No transactions before start date, opening balance is 0
-      openingBalance = 0;
-    }
-    openingBalanceDate = formatStartDate(startDate);
-  } else {
-    // If no start date, opening balance is 0
-    openingBalance = 0;
-  }
-
-    // 4️⃣ Get all transactions for the statement
+    // 4️⃣ Get all transactions for the date range
     const transactionsQuery = `
       SELECT 
         t.id,
@@ -218,6 +210,9 @@ if (startDate) {
 
     const transactionsResult = await client.query(transactionsQuery, queryParams);
     
+    console.log(`Found ${transactionsResult.rows.length} transactions for date range`);
+    console.log(`Date range: ${formattedStartDate} to ${formattedEndDate}`);
+
     // 5️⃣ Calculate running balance for each transaction
     let runningBalance = openingBalance;
     const statementTransactions = transactionsResult.rows.map(transaction => {
@@ -284,7 +279,7 @@ if (startDate) {
       };
     });
 
-    // 6️⃣ Calculate statement summaries
+    // 6️⃣ Calculate statement summaries from the transactions in the date range only
     const summary = {
       total_deposits: 0,
       total_withdrawals: 0,
@@ -324,8 +319,8 @@ if (startDate) {
     // 7️⃣ Build the statement response
     const statement = {
       statement_period: {
-        start_date: startDate ? formatStartDate(startDate) : null,
-        end_date: endDate ? formatEndDate(endDate) : new Date().toISOString(),
+        start_date: formattedStartDate,
+        end_date: formattedEndDate || new Date().toISOString(),
         generated_on: new Date().toISOString()
       },
       account_info: {
@@ -338,7 +333,7 @@ if (startDate) {
         customer_name: account.customer_name,
         customer_phone: account.phone_number,
         customer_email: account.email,
-        customer_address: account.address,
+        customer_address: account.location || 'Not provided',
         customer_account_number: account.customer_account_number
       },
       bank_info: {
@@ -382,7 +377,6 @@ if (startDate) {
     client.release();
   }
 };
-
 // Alternative endpoint that allows filtering by customer (all their accounts)
 export const generateCustomerStatement = async (req, res) => {
   const { customerId } = req.params;
