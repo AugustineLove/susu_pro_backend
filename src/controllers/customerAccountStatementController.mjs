@@ -1,3 +1,5 @@
+import pool from "../db.mjs";
+
 export const generateAccountStatement = async (req, res) => {
   const { accountId } = req.params;
   const {
