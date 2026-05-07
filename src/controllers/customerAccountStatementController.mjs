@@ -48,12 +48,12 @@ export const generateAccountStatement = async (req, res) => {
         c.name AS customer_name,
         c.phone_number,
         c.email,
-        c.address,
+        c.location,
         c.account_number AS customer_account_number,
         comp.name AS company_name,
         comp.email AS company_email,
         comp.phone AS company_phone,
-        comp.address AS company_address
+        comp.location AS company_address
       FROM accounts a
       JOIN customers c ON a.customer_id = c.id
       JOIN companies comp ON a.company_id = comp.id
