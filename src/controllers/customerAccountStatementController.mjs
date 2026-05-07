@@ -7,7 +7,7 @@ export const generateAccountStatement = async (req, res) => {
     startDate,
     endDate,
     includePending = false,
-    transactionTypes = 'all' // 'all', 'deposits', 'withdrawals', 'transfers'
+    transactionTypes = 'all' 
   } = req.query;
 
   // Validate required parameters
