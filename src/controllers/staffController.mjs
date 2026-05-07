@@ -452,6 +452,68 @@ export const updateStaffPermissions = async (req, res) => {
   }
 };
 
+export const updateStaffDetails = async (req, res) => {
+  const { id } = req.params;
+
+  const {
+    full_name,
+    email,
+    phone,
+    role,
+    status
+  } = req.body;
+
+  console.log("Updating staff:", id);
+
+  try {
+
+    const updatedStaff = await pool.query(
+      `
+      UPDATE staff
+      SET
+        full_name = $1,
+        email = $2,
+        phone = $3,
+        role = $4,
+        status = $5
+      WHERE id = $6
+      RETURNING *
+      `,
+      [
+        full_name,
+        email,
+        phone,
+        role,
+        status,
+        id
+      ]
+    );
+
+    if (updatedStaff.rows.length === 0) {
+      return res.status(404).json({
+        status: "fail",
+        message: "Staff not found"
+      });
+    }
+
+    return res.status(200).json({
+      status: "success",
+      message: "Staff updated successfully",
+      data: updatedStaff.rows[0]
+    });
+
+  } catch (error) {
+
+    console.error("Error updating staff:", error.message);
+
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error"
+    });
+
+  }
+};
+
 export const deleteStaff = async (req, res) => {
   const { id } = req.params;
 
