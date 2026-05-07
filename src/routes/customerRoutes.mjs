@@ -3,6 +3,7 @@ import { addSmsNumber, createCustomer, deleteCustomer, findCustomers, getCustome
 import { requirePermission } from "../middlewares/staffPermissions.mjs";
 import { verifyCompanyToken } from "../middlewares/verifyCompany.mjs";
 import { checkDayNotClosed } from "../middlewares/checkDayNotClosed.mjs";
+import { generateCustomerStatement } from "../controllers/customerAccountStatementController.mjs";
 
 
 export const customerRouter = Router();
@@ -10,6 +11,7 @@ export const customerRouter = Router();
 customerRouter.post('/create', createCustomer);
 customerRouter.get('/staff/:staffId', getCustomersByStaff);
 customerRouter.get('/company/:companyId', getCustomersByCompany);
+customerRouter.get('/:customerId/statement', generateCustomerStatement);
 customerRouter.delete('/delete', deleteCustomer);
 customerRouter.put('/update-mobile', udpateCustomerInfoMobile); 
 customerRouter.get('/:customerId', getCustomerById);
