@@ -36,6 +36,6 @@ allRoutes.use('/api/reports', reportRoutes);
 allRoutes.use('/api/sales-manager', salesRoutes);
 allRoutes.use('/api/day-end', dayEndRouter);
 allRoutes.use('/api/agent', momoAgentRouter);
-allRoutes.use('/api/accounting', accountingRoutes);
+allRoutes.use('/api/accounting/:companyId', accountingRoutes);
 
 export default allRoutes;
