@@ -498,6 +498,9 @@ export const getCustomerCardReplacements = async (req, res) => {
 // POST /api/accounts/:accountId/card/replace-with-record
 // Request a card replacement with full record keeping
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper function to mask card numbers
+
+
 export const requestCardReplacement = async (req, res) => {
   const { accountId } = req.params;
   const companyId = req.user?.companyId;
@@ -549,9 +552,9 @@ export const requestCardReplacement = async (req, res) => {
 
     const account = accountRows[0];
     const oldCardNumber = account.card_number;
-    const replacementCount = account.card_replacement_count + 1;
+    const replacementCount = (account.card_replacement_count || 0) + 1;
 
-    // 2️⃣ Generate new card number (you can customize this logic)
+    // 2️⃣ Generate new card number
     const generateNewCardNumber = () => {
       const prefix = "4111"; // Visa/Mastercard prefix
       const timestamp = Date.now().toString().slice(-8);
@@ -613,39 +616,39 @@ export const requestCardReplacement = async (req, res) => {
     );
 
     // 5️⃣ If fee is charged, create a transaction for it
-    // let feeTransaction = null;
-    // if (fee_charged > 0) {
-    //   const { rows: feeRows } = await client.query(
-    //     `INSERT INTO transactions (
-    //       account_id,
-    //       company_id,
-    //       type,
-    //       amount,
-    //       description,
-    //       created_by,
-    //       created_by_type,
-    //       status,
-    //       transaction_date
-    //     ) VALUES ($1, $2, 'fee', $3, $4, $5, 'staff', 'completed', NOW())
-    //     RETURNING *`,
-    //     [
-    //       accountId,
-    //       companyId,
-    //       fee_charged,
-    //       `Card replacement fee - Request #${replacement.id}`,
-    //       staffId
-    //     ]
-    //   );
-    //   feeTransaction = feeRows[0];
+    let feeTransaction = null;
+    if (fee_charged > 0) {
+      const { rows: feeRows } = await client.query(
+        `INSERT INTO transactions (
+          account_id,
+          company_id,
+          type,
+          amount,
+          description,
+          created_by,
+          created_by_type,
+          status,
+          transaction_date
+        ) VALUES ($1, $2, 'fee', $3, $4, $5, 'staff', 'completed', NOW())
+        RETURNING *`,
+        [
+          accountId,
+          companyId,
+          fee_charged,
+          `Card replacement fee - Request #${replacement.id}`,
+          staffId
+        ]
+      );
+      feeTransaction = feeRows[0];
 
-    //   // Update the replacement record with fee transaction ID
-    //   await client.query(
-    //     `UPDATE card_replacements 
-    //      SET fee_transaction_id = $1 
-    //      WHERE id = $2`,
-    //     [feeTransaction.id, replacement.id]
-    //   );
-    // }
+      // Update the replacement record with fee transaction ID
+      await client.query(
+        `UPDATE card_replacements 
+         SET fee_transaction_id = $1 
+         WHERE id = $2`,
+        [feeTransaction.id, replacement.id]
+      );
+    }
 
     await client.query("COMMIT");
 
@@ -655,10 +658,10 @@ export const requestCardReplacement = async (req, res) => {
       data: {
         replacement: {
           ...replacement,
-          // fee_transaction: feeTransaction
+          fee_transaction: feeTransaction
         },
-        old_card_number: this.maskCardNumber(oldCardNumber),
-        new_card_number: this.maskCardNumber(newCardNumber),
+        old_card_number: maskCardNumber(oldCardNumber),
+        new_card_number: maskCardNumber(newCardNumber),
         estimated_delivery_date: estimatedDeliveryDate
       }
     });
@@ -668,7 +671,8 @@ export const requestCardReplacement = async (req, res) => {
     console.error("requestCardReplacement error:", error);
     return res.status(500).json({ 
       status: 'error',
-      message: "Internal server error." 
+      message: "Internal server error.",
+      error: error.message 
     });
   } finally {
     client.release();
