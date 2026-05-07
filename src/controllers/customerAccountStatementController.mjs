@@ -1,7 +1,7 @@
 import pool from "../db.mjs";
 
 export const generateAccountStatement = async (req, res) => {
-  const { accountId } = req.params;
+  const { accountNumber } = req.params; // Changed from accountId to accountNumber
   const {
     startDate,
     endDate,
@@ -10,10 +10,10 @@ export const generateAccountStatement = async (req, res) => {
   } = req.query;
 
   // Validate required parameters
-  if (!accountId) {
+  if (!accountNumber) {
     return res.status(400).json({
       status: 'fail',
-      message: 'Account ID is required',
+      message: 'Account number is required',
     });
   }
 
@@ -35,7 +35,7 @@ export const generateAccountStatement = async (req, res) => {
   const client = await pool.connect();
 
   try {
-    // 1️⃣ Get account details with customer info
+    // 1️⃣ First, get the account ID from the account number
     const accountQuery = `
       SELECT 
         a.id,
@@ -57,10 +57,10 @@ export const generateAccountStatement = async (req, res) => {
       FROM accounts a
       JOIN customers c ON a.customer_id = c.id
       JOIN companies comp ON a.company_id = comp.id
-      WHERE a.id = $1
+      WHERE a.account_number = $1 AND a.is_deleted = false
     `;
 
-    const accountResult = await client.query(accountQuery, [accountId]);
+    const accountResult = await client.query(accountQuery, [accountNumber]);
 
     if (accountResult.rowCount === 0) {
       return res.status(404).json({
@@ -70,6 +70,7 @@ export const generateAccountStatement = async (req, res) => {
     }
 
     const account = accountResult.rows[0];
+    const accountId = account.id; // Get the actual account ID
 
     // 2️⃣ Build transaction filter conditions
     let whereConditions = [
@@ -147,17 +148,8 @@ export const generateAccountStatement = async (req, res) => {
       const openingResult = await client.query(openingBalanceQuery, [accountId, formatStartDate(startDate)]);
       const netChange = parseFloat(openingResult.rows[0].net_change);
       
-      // Get the balance from before the start date
-      const balanceBeforeQuery = `
-        SELECT balance
-        FROM accounts a
-        WHERE a.id = $1
-      `;
-      const balanceResult = await client.query(balanceBeforeQuery, [accountId]);
-      const currentBalance = parseFloat(balanceResult.rows[0].balance);
-      
       // Calculate opening balance = current balance - net change during period
-      openingBalance = currentBalance - netChange;
+      openingBalance = parseFloat(account.current_balance) - netChange;
       openingBalanceDate = formatStartDate(startDate);
     } else {
       // If no start date, get the earliest balance or initial balance
@@ -181,9 +173,8 @@ export const generateAccountStatement = async (req, res) => {
       
       const totalResult = await client.query(earliestBalanceQuery, [accountId]);
       const totalNetChange = parseFloat(totalResult.rows[0].total_net_change);
-      const currentBalance = parseFloat(account.current_balance);
       
-      openingBalance = currentBalance - totalNetChange;
+      openingBalance = parseFloat(account.current_balance) - totalNetChange;
     }
 
     // 4️⃣ Get all transactions for the statement
@@ -205,7 +196,16 @@ export const generateAccountStatement = async (req, res) => {
         t.source_transaction_id,
         rs.full_name AS reversed_by_name,
         mb.full_name AS created_by_name,
-        COALESCE(t.description, '') AS transaction_description
+        COALESCE(t.description, 
+          CASE 
+            WHEN t.type = 'deposit' THEN 'Deposit'
+            WHEN t.type = 'withdrawal' THEN 'Withdrawal'
+            WHEN t.type = 'transfer_in' THEN 'Transfer In'
+            WHEN t.type = 'transfer_out' THEN 'Transfer Out'
+            WHEN t.type = 'commission' THEN 'Commission Fee'
+            ELSE t.type
+          END
+        ) AS transaction_description
       FROM transactions t
       LEFT JOIN staff rs ON t.reversed_by = rs.id
       LEFT JOIN staff mb ON t.created_by = mb.id
@@ -264,7 +264,7 @@ export const generateAccountStatement = async (req, res) => {
       return {
         transaction_id: transaction.id,
         date: transaction.transaction_date,
-        description: transaction.transaction_description || transactionTypeDisplay,
+        description: transaction.transaction_description,
         transaction_type: transaction.type,
         transaction_type_display: transactionTypeDisplay,
         unique_code: transaction.unique_code,

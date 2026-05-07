@@ -17,7 +17,7 @@ accountRouter.get(
   getLastAccountNumbersByStaff
 );
 accountRouter.get('/last-customer-account-number/:staffId', getLastCustomerAccountNumber);
-accountRouter.get('/:accountId/statement', generateAccountStatement);
+accountRouter.get('/:accountNumber/statement', generateAccountStatement);
 accountRouter.patch('/:accountId/toggle-status', toggleAccountStatus);
 accountRouter.patch(
   "/:accountId/settings",
