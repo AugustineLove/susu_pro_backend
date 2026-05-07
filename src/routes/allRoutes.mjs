@@ -16,6 +16,7 @@ import loanRoutes from './loanRoutes.mjs';
 import dayEndRouter from './dayEndRoutes.mjs';
 import salesRoutes from './salesRoutes.mjs';
 import momoAgentRouter from './momoAgentRoutes.mjs';
+import accountingRoutes from './accountingRoutes.mjs';
 
 const allRoutes = Router();
 
@@ -35,5 +36,6 @@ allRoutes.use('/api/reports', reportRoutes);
 allRoutes.use('/api/sales-manager', salesRoutes);
 allRoutes.use('/api/day-end', dayEndRouter);
 allRoutes.use('/api/agent', momoAgentRouter);
+allRoutes.use('/api/accounting', accountingRoutes);
 
 export default allRoutes;
