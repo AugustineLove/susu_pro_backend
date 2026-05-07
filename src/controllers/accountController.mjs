@@ -658,7 +658,7 @@ export const requestCardReplacement = async (req, res) => {
       data: {
         replacement: {
           ...replacement,
-          fee_transaction: feeTransaction
+          // fee_transaction: feeTransaction
         },
         old_card_number: maskCardNumber(oldCardNumber),
         new_card_number: maskCardNumber(newCardNumber),
