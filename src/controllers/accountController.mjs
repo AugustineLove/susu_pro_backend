@@ -849,7 +849,7 @@ export const searchAccountByNumber = async (req, res) => {
 export const searchCustomer = async (req, res) => {
   const { query } = req.query;
   const companyId = req.user?.companyId;
-
+  console.log(query,companyId);
   try {
     const { rows } = await pool.query(
       `SELECT 
