@@ -19,9 +19,9 @@ accountRouter.get(
 accountRouter.get('/last-customer-account-number/:staffId', getLastCustomerAccountNumber);
 accountRouter.get('/:accountNumber/statement', generateAccountStatement);
 
-accountRouter.get('/search', searchAccountByNumber);
-accountRouter.get('/:accountId/card-replacements', getCardReplacements);
-accountRouter.post('/:accountId/card/replace-with-record', requestCardReplacement);
+accountRouter.get('/search', authenticateToken, searchAccountByNumber);
+accountRouter.get('/:accountId/card-replacements', authenticateToken, getCardReplacements);
+accountRouter.post('/:accountId/card/replace-with-record', authenticateToken, requestCardReplacement);
 accountRouter.patch('/:accountId/toggle-status', toggleAccountStatus);
 accountRouter.patch(
   "/:accountId/settings",

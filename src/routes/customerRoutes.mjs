@@ -5,16 +5,17 @@ import { verifyCompanyToken } from "../middlewares/verifyCompany.mjs";
 import { checkDayNotClosed } from "../middlewares/checkDayNotClosed.mjs";
 import { generateCustomerStatement } from "../controllers/customerAccountStatementController.mjs";
 import { getCustomerAccounts, getCustomerCardReplacements, searchCustomer, updateCardReplacementStatus } from "../controllers/accountController.mjs";
+import { authenticateToken } from "../middlewares/authenticateToken.mjs";
 
 
 export const customerRouter = Router();
 
 customerRouter.post('/create', createCustomer);
 customerRouter.get('/staff/:staffId', getCustomersByStaff);
-customerRouter.get('/search', searchCustomer);
+customerRouter.get('/search',authenticateToken, searchCustomer);
 customerRouter.get('/:customerId/accounts', getCustomerAccounts);
-customerRouter.get('/:customerId/card-replacements', getCustomerCardReplacements);
-customerRouter.put('/card-replacements/:replacementId/status', updateCardReplacementStatus);
+customerRouter.get('/:customerId/card-replacements', authenticateToken, getCustomerCardReplacements);
+customerRouter.put('/card-replacements/:replacementId/status', authenticateToken, updateCardReplacementStatus);
 customerRouter.get('/company/:companyId', getCustomersByCompany);
 customerRouter.get('/:customerId/statement', generateCustomerStatement);
 customerRouter.delete('/delete', deleteCustomer);
