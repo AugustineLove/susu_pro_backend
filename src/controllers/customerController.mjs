@@ -1,3 +1,4 @@
+import { Op, where } from 'sequelize';
 import pool from '../db.mjs';
 import { generateWithdrawalCode } from '../utils/withdrawalCode.mjs';
 import { sendCustomerMessageBackend } from './smsController.mjs';
@@ -170,7 +171,176 @@ export const getCustomerById = async (req, res) => {
   }
 }
 
-// GET /api/customers/staff/:staffId
+export const findCustomers = async (req, res) => {
+  try {
+    const {
+      page = '1',
+      limit = '20',
+
+      name,
+      phone_number,
+      email,
+      account_number,
+      gender,
+      status,
+      location,
+    } = req.query;
+    const { companyId } = req.params;
+
+    const conditions = [];
+    const values = [];
+
+    console.log(companyId);
+
+    values.push(companyId);
+
+    // Helper function to split search term and create conditions for each word
+    const addSearchCondition = (column, searchTerm, valuesArray, conditionsArray) => {
+      if (!searchTerm) return;
+      
+      const words = searchTerm.trim().split(/\s+/);
+      
+      if (words.length === 1) {
+        // Single word - simple ILIKE
+        valuesArray.push(`%${words[0]}%`);
+        conditionsArray.push(`${column} ILIKE $${valuesArray.length}`);
+      } else {
+        // Multiple words - need to match all words anywhere in the string
+        const wordConditions = [];
+        for (const word of words) {
+          valuesArray.push(`%${word}%`);
+          wordConditions.push(`${column} ILIKE $${valuesArray.length}`);
+        }
+        conditionsArray.push(`(${wordConditions.join(' AND ')})`);
+      }
+    };
+
+    if (name) {
+      addSearchCondition('c.name', name, values, conditions);
+    }
+
+    if (phone_number) {
+      addSearchCondition('c.phone_number', phone_number, values, conditions);
+    }
+
+    if (email) {
+      addSearchCondition('c.email', email, values, conditions);
+    }
+
+    if (account_number) {
+      addSearchCondition('c.account_number', account_number, values, conditions);
+    }
+
+    if (gender) {
+      values.push(gender);
+      conditions.push(`c.gender = $${values.length}`);
+    }
+
+    if (status) {
+      values.push(status);
+      conditions.push(`c.status = $${values.length}`);
+    }
+
+    if (location) {
+      addSearchCondition('c.location', location, values, conditions);
+    }
+
+    const whereClause = `
+      WHERE c.company_id = $1
+      AND c.is_deleted = false
+      ${conditions.length ? `AND ${conditions.join(' AND ')}` : ''}
+    `;
+    
+    // ─────────────────────────────────────
+    // Pagination
+    // ─────────────────────────────────────
+
+    const currentPage = Number(page);
+    const pageSize = Number(limit);
+
+    const offset = (currentPage - 1) * pageSize;
+
+    // ─────────────────────────────────────
+    // Get customers
+    // ─────────────────────────────────────
+
+    values.push(pageSize);
+    values.push(offset);
+
+    console.log(`Where clause: ${whereClause}`);
+
+    const customersQuery = `
+      SELECT c.*,
+        c.send_sms,
+        COALESCE(c.sms_numbers, '{}') AS sms_numbers,
+
+        s.id AS registered_by,
+        s.full_name AS registered_by_name,
+
+        COALESCE(
+          SUM(
+            CASE 
+              WHEN a.account_type NOT ILIKE '%loan%' 
+              THEN a.balance 
+              ELSE 0 
+            END
+          ),
+          0
+        ) AS total_balance_across_all_accounts
+
+      FROM customers c
+      LEFT JOIN accounts a 
+        ON c.id = a.customer_id
+
+      LEFT JOIN staff s
+        ON c.registered_by = s.id
+
+      ${whereClause}
+
+      GROUP BY c.id, s.id, s.full_name
+
+      ORDER BY c.created_at DESC
+      LIMIT $${values.length - 1}
+      OFFSET $${values.length}
+    `;
+    
+    const customers = await pool.query(customersQuery, values);
+
+    // ─────────────────────────────────────
+    // Count total
+    // ─────────────────────────────────────
+
+    const countValues = values.slice(0, values.length - 2);
+
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM customers c
+      ${whereClause}
+    `;
+
+    const totalResult = await pool.query(countQuery, countValues);
+    const total = Number(totalResult.rows[0].count);
+
+    return res.status(200).json({
+      success: true,
+      data: customers.rows,
+      pagination: {
+        total,
+        totalPages: Math.ceil(total / pageSize),
+        page: currentPage,
+        limit: pageSize,
+      },
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to search customers',
+    });
+  }
+};
 
 export const getCustomersByStaff = async (req, res) => {
   const { staffId } = req.params;
