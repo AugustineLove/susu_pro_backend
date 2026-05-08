@@ -9,27 +9,49 @@ export const getChartOfAccounts = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT
-        coa.*,
-        p.name AS parent_name,
-        p.code AS parent_code,
-        -- current balance from posted entries
-        COALESCE((
-          SELECT
-            CASE coa.normal_balance
-              WHEN 'debit'  THEN SUM(jel.amount) FILTER (WHERE jel.debit_credit='debit')
-                             - SUM(jel.amount) FILTER (WHERE jel.debit_credit='credit')
-              WHEN 'credit' THEN SUM(jel.amount) FILTER (WHERE jel.debit_credit='credit')
-                             - SUM(jel.amount) FILTER (WHERE jel.debit_credit='debit')
-            END
-          FROM journal_entry_lines jel
-          JOIN journal_entries je ON je.id = jel.journal_entry_id
-          WHERE jel.coa_id = coa.id AND je.status = 'posted'
-        ), 0) AS current_balance
-      FROM chart_of_accounts coa
-      LEFT JOIN chart_of_accounts p ON p.id = coa.parent_id
-      WHERE coa.company_id = $1
-        AND coa.is_deleted  = false
-      ORDER BY coa.code`,
+  coa.*,
+  p.name AS parent_name,
+  p.code AS parent_code,
+
+  COALESCE((
+    SELECT
+      CASE coa.normal_balance
+
+        WHEN 'debit' THEN
+          COALESCE(SUM(jel.amount)
+            FILTER (WHERE jel.debit_credit = 'debit'), 0)
+          -
+          COALESCE(SUM(jel.amount)
+            FILTER (WHERE jel.debit_credit = 'credit'), 0)
+
+        WHEN 'credit' THEN
+          COALESCE(SUM(jel.amount)
+            FILTER (WHERE jel.debit_credit = 'credit'), 0)
+          -
+          COALESCE(SUM(jel.amount)
+            FILTER (WHERE jel.debit_credit = 'debit'), 0)
+
+      END
+
+    FROM journal_entry_lines jel
+    JOIN journal_entries je
+      ON je.id = jel.journal_entry_id
+
+    WHERE jel.coa_id = coa.id
+      AND je.status = 'posted'
+      AND je.company_id = $1
+
+  ), 0) AS current_balance
+
+FROM chart_of_accounts coa
+
+LEFT JOIN chart_of_accounts p
+  ON p.id = coa.parent_id
+
+WHERE coa.company_id = $1
+  AND coa.is_deleted = false
+
+ORDER BY coa.code;`,
       [companyId]
     );
     return res.json({ status: "success", data: result.rows });
