@@ -1,6 +1,14 @@
 // controllers/transactionController.mjs
 import pool from '../db.mjs';
 
+import {
+  postJournalEntry,
+  resolveCOA,
+  cashCoaCode,
+  depositCoaCode,
+} from "../services/accountingHelper.mjs";
+
+
 export const getTransactionsByAccount = async (req, res) => {
   const { account_id } = req.params;
 
@@ -348,101 +356,57 @@ export const formatEndDate = (date) => {
 
 export const approveTransaction = async (req, res) => {
   const transactionId = req.params.id;
-  const client = await pool.connect();
-  const { teller_id } = req.body;
+  const { teller_id }  = req.body;
 
+  const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    /* =====================================================
-     * 1. Fetch transaction
-     * =================================================== */
+    // ── 1. Fetch & validate transaction ──────────────────
     const txRes = await client.query(
-      `
-      SELECT id, account_id, amount, type, status, created_by
-      FROM transactions
-      WHERE id = $1
-      `,
+      `SELECT id, account_id, amount, type, status, created_by,
+              payment_method, accounting_je_id
+       FROM transactions WHERE id = $1 FOR UPDATE`,
       [transactionId]
     );
+    if (txRes.rowCount === 0) throw new Error("Transaction not found");
 
-    if (txRes.rowCount === 0) {
-      throw new Error("Transaction not found");
-    }
-
-    const transaction = txRes.rows[0];
-
-    if (transaction.type !== "withdrawal" || transaction.status !== "pending") {
+    const tx = txRes.rows[0];
+    if (tx.type !== "withdrawal" || tx.status !== "pending")
       throw new Error("Only pending withdrawals can be approved");
-    }
 
-    const amount = parseFloat(transaction.amount);
+    const amount = parseFloat(tx.amount);
 
-    /* =====================================================
-     * 2. Fetch account, customer & company
-     * =================================================== */
+    // ── 2. Fetch account + company ────────────────────────
     const accRes = await client.query(
-      `
-      SELECT 
-        a.id,
-        a.balance,
-        a.company_id,
-        c.id AS customer_id
-      FROM accounts a
-      JOIN customers c ON c.id = a.customer_id
-      WHERE a.id = $1
-      `,
-      [transaction.account_id]
+      `SELECT a.id, a.balance, a.company_id, a.account_type, a.customer_id
+       FROM accounts a WHERE a.id = $1 FOR UPDATE`,
+      [tx.account_id]
     );
-
-    if (accRes.rowCount === 0) {
-      throw new Error("Associated account not found");
-    }
+    if (accRes.rowCount === 0) throw new Error("Associated account not found");
 
     const account = accRes.rows[0];
-
-    if (amount > account.balance) {
+    if (amount > parseFloat(account.balance))
       throw new Error("Insufficient account balance");
-    }
 
-    /* =====================================================
-     * 3. Deduct from account
-     * =================================================== */
+    // ── 3. Deduct from customer savings balance ───────────
     await client.query(
-      `
-      UPDATE accounts
-      SET balance = balance - $1
-      WHERE id = $2
-      `,
+      `UPDATE accounts SET balance = balance - $1, last_activity_at = NOW() WHERE id = $2`,
       [amount, account.id]
     );
 
-    /* =====================================================
-     * 4. Approve transaction
-     * =================================================== */
+    // ── 4. Mark transaction approved ─────────────────────
     await client.query(
-      `
-      UPDATE transactions
-      SET status = 'approved'
-      WHERE id = $1
-      `,
-      [transaction.id]
+      `UPDATE transactions SET status = 'approved' WHERE id = $1`,
+      [tx.id]
     );
 
-    /* =====================================================
-     * 5. Deduct from float (ALLOW NEGATIVE)
-     *    + record float_movements
-     * =================================================== */
+    // ── 5. Float deduction (existing logic — unchanged) ──
     const today = new Date().toISOString().split("T")[0];
 
     const budgetRes = await client.query(
-      `
-      SELECT id, allocated, spent
-      FROM budgets
-      WHERE company_id = $1
-      AND date = $2
-      ORDER BY id ASC
-      `,
+      `SELECT id, allocated, spent FROM budgets
+       WHERE company_id = $1 AND date = $2 ORDER BY id ASC`,
       [account.company_id, today]
     );
 
@@ -451,124 +415,121 @@ export const approveTransaction = async (req, res) => {
     if (budgetRes.rowCount > 0) {
       for (const budget of budgetRes.rows) {
         if (remaining <= 0) break;
-
         const available = budget.allocated - budget.spent;
-        let deducted = 0;
-
         if (available > 0) {
-          if (remaining <= available) {
-            deducted = remaining;
-            remaining = 0;
-
-            await client.query(
-              `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
-              [deducted, budget.id]
-            );
-          } else {
-            deducted = available;
-            remaining -= available;
-
-            await client.query(
-              `UPDATE budgets SET spent = allocated WHERE id = $1`,
-              [budget.id]
-            );
-          }
-
-          // 🔹 Record float movement
+          const deducted = Math.min(remaining, available);
+          remaining -= deducted;
           await client.query(
-            `
-            INSERT INTO float_movements (
-              budget_id,
-              company_id,
-              source_type,
-              source_id,
-              amount,
-              direction
-            )
-            VALUES ($1, $2, 'withdrawal', $3, $4, 'debit')
-            `,
-            [budget.id, account.company_id, transaction.id, deducted]
+            deducted < available
+              ? `UPDATE budgets SET spent = spent + $1 WHERE id = $2`
+              : `UPDATE budgets SET spent = allocated WHERE id = $1`,
+            deducted < available ? [deducted, budget.id] : [budget.id]
+          );
+          await client.query(
+            `INSERT INTO float_movements
+               (budget_id, company_id, source_type, source_id, amount, direction)
+             VALUES ($1,$2,'withdrawal',$3,$4,'debit')`,
+            [budget.id, account.company_id, tx.id, deducted]
           );
         }
       }
-
-      // 🚨 Push negative if still remaining
       if (remaining > 0) {
-        const targetBudget = budgetRes.rows[0];
-
         await client.query(
           `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
-          [remaining, targetBudget.id]
+          [remaining, budgetRes.rows[0].id]
         );
-
         await client.query(
-          `
-          INSERT INTO float_movements (
-            budget_id,
-            company_id,
-            source_type,
-            source_id,
-            amount,
-            direction
-          )
-          VALUES ($1, $2, 'withdrawal', $3, $4, 'debit')
-          `,
-          [targetBudget.id, account.company_id, transaction.id, remaining]
+          `INSERT INTO float_movements
+             (budget_id, company_id, source_type, source_id, amount, direction)
+           VALUES ($1,$2,'withdrawal',$3,$4,'debit')`,
+          [budgetRes.rows[0].id, account.company_id, tx.id, remaining]
         );
       }
     } else {
-      // 🚨 No float today → create NEGATIVE float
-      const { rows } = await client.query(
-        `
-        INSERT INTO budgets (company_id, date, allocated, spent, status)
-        VALUES ($1, $2, 0, $3, 'Active')
-        RETURNING id
-        `,
+      const newBudget = await client.query(
+        `INSERT INTO budgets (company_id, date, allocated, spent, status)
+         VALUES ($1,$2,0,$3,'Active') RETURNING id`,
         [account.company_id, today, amount]
       );
-
       await client.query(
-        `
-        INSERT INTO float_movements (
-          budget_id,
-          company_id,
-          source_type,
-          source_id,
-          amount,
-          direction
-        )
-        VALUES ($1, $2, 'withdrawal', $3, $4, 'debit')
-        `,
-        [rows[0].id, account.company_id, transaction.id, amount]
+        `INSERT INTO float_movements
+           (budget_id, company_id, source_type, source_id, amount, direction)
+         VALUES ($1,$2,'withdrawal',$3,$4,'debit')`,
+        [newBudget.rows[0].id, account.company_id, tx.id, amount]
       );
     }
 
-    /* =====================================================
-     * 6. Commit
-     * =================================================== */
+    // ── 6. Accounting: post the journal entry ─────────────
+    const cashCode    = cashCoaCode(tx.payment_method);
+    const depositCode = depositCoaCode(account.account_type);
+    const cashCoaId    = await resolveCOA(client, account.company_id, cashCode);
+    const depositCoaId = await resolveCOA(client, account.company_id, depositCode);
+
+    const entryDate = new Date().toISOString().slice(0, 10);
+    const approverId = teller_id || tx.created_by;
+
+    if (tx.accounting_je_id) {
+      // Draft JE already exists from stakeMoney — just post it
+      await client.query(
+        `UPDATE journal_entries
+         SET status = 'posted', posted_by = $1, posted_at = NOW()
+         WHERE id = $2 AND status = 'draft'`,
+        [approverId, tx.accounting_je_id]
+      );
+    } else {
+      // No pre-existing draft — create and post fresh
+      await postJournalEntry(client, {
+        companyId:   account.company_id,
+        description: `Withdrawal approved — account ${account.id}`,
+        entryDate,
+        source:      "customer_withdrawal",
+        sourceId:    tx.id,
+        sourceTable: "transactions",
+        createdBy:   approverId,
+        lines: [
+          {
+            coaId:      depositCoaId,
+            dc:         "debit",
+            amount,
+            description: "Customer deposit liability reduced on withdrawal",
+            customerId: account.customer_id,
+            accountId:  account.id,
+            staffId:    approverId,
+          },
+          {
+            coaId:      cashCoaId,
+            dc:         "credit",
+            amount,
+            description: "Cash / float paid out",
+            customerId: account.customer_id,
+            accountId:  account.id,
+            staffId:    approverId,
+          },
+        ],
+      });
+    }
+
     await client.query("COMMIT");
 
     return res.status(200).json({
-      status: "success",
+      status:  "success",
       message: "Withdrawal approved successfully",
       data: {
-        transaction_id: transaction.id,
-        withdrawn: amount,
-        newBalance: account.balance - amount,
+        transaction_id: tx.id,
+        withdrawn:      amount,
+        newBalance:     parseFloat(account.balance) - amount,
       },
     });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("Approve transaction error:", error.message);
 
-    return res.status(400).json({
-      status: "fail",
-      message: error.message,
-    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("approveTransaction error:", err.message);
+    return res.status(400).json({ status: "fail", message: err.message });
   } finally {
     client.release();
   }
 };
+
 
 
 export const rejectTransaction = async (req, res) => {
@@ -578,24 +539,21 @@ export const rejectTransaction = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // 1. Fetch the transaction
+    // 1. Fetch transaction
     const txRes = await client.query(
-      `SELECT id, type, status FROM transactions WHERE id = $1`,
+      `SELECT id, type, status, accounting_je_id
+       FROM transactions WHERE id = $1 FOR UPDATE`,
       [transactionId]
     );
 
     if (txRes.rowCount === 0) {
       await client.query("ROLLBACK");
-      return res.status(404).json({
-        status: "fail",
-        message: "Transaction not found",
-      });
+      return res.status(404).json({ status: "fail", message: "Transaction not found" });
     }
 
-    const transaction = txRes.rows[0];
+    const tx = txRes.rows[0];
 
-    // 2. Ensure it's a pending withdrawal
-    if (transaction.type !== "withdrawal" || transaction.status !== "pending") {
+    if (tx.type !== "withdrawal" || tx.status !== "pending") {
       await client.query("ROLLBACK");
       return res.status(400).json({
         status: "fail",
@@ -603,26 +561,37 @@ export const rejectTransaction = async (req, res) => {
       });
     }
 
-    // 3. Update status to rejected
+    // 2. Cancel the draft journal entry that was parked by stakeMoney.
+    //    We mark it 'reversed' (rather than deleting) so the audit
+    //    trail shows it existed and was voided.
+    if (tx.accounting_je_id) {
+      await client.query(
+        `UPDATE journal_entries
+         SET status = 'reversed',
+             reversed_at      = NOW(),
+             reversal_reason  = 'Withdrawal rejected'
+         WHERE id = $1 AND status = 'draft'`,
+        [tx.accounting_je_id]
+      );
+    }
+
+    // 3. Mark the transaction rejected
     await client.query(
       `UPDATE transactions SET status = 'rejected' WHERE id = $1`,
-      [transaction.id]
+      [tx.id]
     );
 
     await client.query("COMMIT");
 
     return res.status(200).json({
-      status: "success",
+      status:  "success",
       message: "Withdrawal request rejected successfully",
     });
-  } catch (error) {
+
+  } catch (err) {
     await client.query("ROLLBACK");
-    console.error("Error rejecting transaction:", error.message);
-    return res.status(500).json({
-      status: "error",
-      message: "Internal server error",
-      error: error.message,
-    });
+    console.error("rejectTransaction error:", err.message);
+    return res.status(500).json({ status: "error", message: err.message });
   } finally {
     client.release();
   }
@@ -630,256 +599,398 @@ export const rejectTransaction = async (req, res) => {
 
 
 export const deleteTransaction = async (req, res) => {
-  const { id } = req.params;
-  const { company_id } = req.body;
-  console.log(`Delete transaction id: ${id}`);
-  if (!id) {
-    return res.status(400).json({
-      status: 'fail',
-      message: 'Transaction ID is required',
-    });
-  }
+  const { id }        = req.params;
+  const { company_id, deleted_by } = req.body;
 
-  const client = await pool.connect();
-
-  try {
-    await client.query('BEGIN');
-
-    const txResult = await client.query(
-      `SELECT * FROM transactions 
-       WHERE id = $1 AND company_id = $2`,
-      [id, company_id]
-    );
-
-    if (txResult.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Transaction not found or not authorized',
-      });
-    }
-
-    const transaction = txResult.rows[0];
-
-    // 2. Update the account balance
-    if (transaction.account_id) {
-      let adjustment = 0;
-
-      if (transaction.type === 'deposit') {
-        adjustment = -Number(transaction.amount); // remove deposit
-      } else if (transaction.type === 'withdrawal' || transaction.type === 'expense') {
-        adjustment = Number(transaction.amount); // add back withdrawal/expense
-      }
-
-      await client.query(
-        `UPDATE accounts
-         SET balance = balance + $1
-         WHERE id = $2 AND company_id = $3`,
-        [adjustment, transaction.account_id, company_id]
-      );
-    }
-
-    // 3. Delete the transaction
-    await client.query(
-       `
-  UPDATE transactions
-SET 
-  is_deleted = TRUE,
-  deleted_at = NOW(),
-  status = 'reversed'
-WHERE id = $1
-  AND company_id = $2
-  AND is_deleted = FALSE;
-  `,
-      [id, company_id]
-    );
-
-    await client.query('COMMIT');
-
-    return res.status(200).json({
-      status: 'success',
-      message: 'Transaction deleted and account balance updated',
-      data: transaction,
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error deleting transaction:', error);
-    return res.status(500).json({
-      status: 'error',
-      message: 'Internal server error',
-    });
-  } finally {
-    client.release();
-  }
-};
-
-export const reverseWithdrawal = async (req, res) => {
-  const { transactionId } = req.params;
-  const { reason, staffId } = req.body;
-  // const staffId = req.user?.id; // from auth middleware
-  if (!staffId) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
+  if (!id)
+    return res.status(400).json({ status: "fail", message: "Transaction ID is required" });
 
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    /* 1️⃣ Fetch transaction */
-    const txRes = await client.query(
-      `
-      SELECT id, amount, account_id, status, type
-      FROM transactions
-      WHERE id = $1
-      FOR UPDATE
-      `,
-      [transactionId]
+    // 1. Fetch full transaction row
+    const txResult = await client.query(
+      `SELECT t.*, a.account_type, a.customer_id, a.company_id AS acc_company_id
+       FROM transactions t
+       LEFT JOIN accounts a ON a.id = t.account_id
+       WHERE t.id = $1 AND t.company_id = $2 AND t.is_deleted = false
+       FOR UPDATE`,
+      [id, company_id]
     );
 
-    if (txRes.rowCount === 0) {
-      throw new Error("Transaction not found");
+    if (txResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ status: "fail", message: "Transaction not found or not authorized" });
     }
 
-    const transaction = txRes.rows[0];
+    const tx = txResult.rows[0];
 
-    if (transaction.type !== "withdrawal") {
-      throw new Error("Only withdrawals can be reversed");
-    }
+    // ── Balance adjustment & JE reversal ─────────────────
+    const amount = Number(tx.amount);
 
-    if (transaction.status !== "approved") {
-      throw new Error("Only approved withdrawals can be reversed");
-    }
-
-    /* 3️⃣ Fetch float movements tied to this withdrawal */
-    const floatRes = await client.query(
-      `
-      SELECT id, budget_id, amount
-      FROM float_movements
-      WHERE source_type = 'withdrawal'
-        AND source_id = $1
-        AND direction = 'debit'
-      `,
-      [transactionId]
-    );
-
-    /* 4️⃣ Reverse each float movement */
-    for (const movement of floatRes.rows) {
-      // Restore budget
+    if (tx.type === "deposit" && tx.status !== "reversed") {
+      // ── Reverse a deposit ─────────────────────────────
+      // Remove the deposit from the customer balance
       await client.query(
-        `
-        UPDATE budgets
-        SET spent = spent - $1
-        WHERE id = $2
-        `,
-        [movement.amount, movement.budget_id]
+        `UPDATE accounts SET balance = balance - $1 WHERE id = $2 AND company_id = $3`,
+        [amount, tx.account_id, company_id]
       );
 
-      // Insert reversal movement
-      await client.query(
-        `
-        INSERT INTO float_movements (
-          budget_id,
-          source_type,
-          source_id,
-          amount,
-          direction,
-          company_id
-        ) VALUES ($1, 'withdrawal', $2, $3, 'credit', (SELECT company_id FROM budgets WHERE id = $1))
-        `,
-        [movement.budget_id, transactionId, movement.amount]
-      );
-    }
+      // Reverse JE:  Dr Customer Deposits  /  Cr Cash
+      const cashCoaId    = await resolveCOA(client, company_id, cashCoaCode(tx.payment_method));
+      const depositCoaId = await resolveCOA(client, company_id, depositCoaCode(tx.account_type));
 
-    /* 5️⃣ Mark transaction as reversed */
+      await postJournalEntry(client, {
+        companyId:   company_id,
+        description: `Deposit deleted — transaction ${tx.id}`,
+        entryDate:   new Date().toISOString().slice(0, 10),
+        source:      "reversal",
+        sourceId:    tx.id,
+        sourceTable: "transactions",
+        createdBy:   deleted_by || tx.created_by,
+        lines: [
+          {
+            coaId:      depositCoaId,
+            dc:         "debit",
+            amount,
+            description: "Reverse deposit — reduce liability",
+            customerId: tx.customer_id,
+            accountId:  tx.account_id,
+          },
+          {
+            coaId:      cashCoaId,
+            dc:         "credit",
+            amount,
+            description: "Reverse deposit — reduce cash asset",
+            customerId: tx.customer_id,
+            accountId:  tx.account_id,
+          },
+        ],
+      });
+
+      // Mark original posted JE as reversed
+      if (tx.accounting_je_id) {
+        await client.query(
+          `UPDATE journal_entries SET status = 'reversed' WHERE id = $1`,
+          [tx.accounting_je_id]
+        );
+      }
+
+    } else if (tx.type === "withdrawal" && tx.status === "approved") {
+      // ── Reverse an approved withdrawal ────────────────
+      // Give the money back to the customer
+      await client.query(
+        `UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND company_id = $3`,
+        [amount, tx.account_id, company_id]
+      );
+
+      // Reverse JE:  Dr Cash  /  Cr Customer Deposits
+      const cashCoaId    = await resolveCOA(client, company_id, cashCoaCode(tx.payment_method));
+      const depositCoaId = await resolveCOA(client, company_id, depositCoaCode(tx.account_type));
+
+      await postJournalEntry(client, {
+        companyId:   company_id,
+        description: `Approved withdrawal deleted — transaction ${tx.id}`,
+        entryDate:   new Date().toISOString().slice(0, 10),
+        source:      "reversal",
+        sourceId:    tx.id,
+        sourceTable: "transactions",
+        createdBy:   deleted_by || tx.created_by,
+        lines: [
+          {
+            coaId:      cashCoaId,
+            dc:         "debit",
+            amount,
+            description: "Reverse withdrawal — cash returned",
+            customerId: tx.customer_id,
+            accountId:  tx.account_id,
+          },
+          {
+            coaId:      depositCoaId,
+            dc:         "credit",
+            amount,
+            description: "Reverse withdrawal — liability restored",
+            customerId: tx.customer_id,
+            accountId:  tx.account_id,
+          },
+        ],
+      });
+
+      if (tx.accounting_je_id) {
+        await client.query(
+          `UPDATE journal_entries SET status = 'reversed' WHERE id = $1`,
+          [tx.accounting_je_id]
+        );
+      }
+
+    } else if (tx.type === "withdrawal" && tx.status === "pending") {
+      // ── Pending withdrawal — nothing was posted ────────
+      // Just void the draft JE if one exists
+      if (tx.accounting_je_id) {
+        await client.query(
+          `UPDATE journal_entries
+           SET status = 'reversed', reversal_reason = 'Transaction deleted while pending'
+           WHERE id = $1 AND status = 'draft'`,
+          [tx.accounting_je_id]
+        );
+      }
+
+    } else if (tx.type === "commission" && tx.status !== "reversed") {
+      // ── Reverse a commission deduction ────────────────
+      // Give commission amount back to customer
+      await client.query(
+        `UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND company_id = $3`,
+        [amount, tx.account_id, company_id]
+      );
+
+      const depositCoaId    = await resolveCOA(client, company_id, depositCoaCode(tx.account_type));
+      const commIncomeCoaId = await resolveCOA(client, company_id, "4020");
+
+      await postJournalEntry(client, {
+        companyId:   company_id,
+        description: `Commission deleted — transaction ${tx.id}`,
+        entryDate:   new Date().toISOString().slice(0, 10),
+        source:      "reversal",
+        sourceId:    tx.id,
+        sourceTable: "transactions",
+        createdBy:   deleted_by || tx.created_by,
+        lines: [
+          {
+            coaId:      commIncomeCoaId,
+            dc:         "debit",
+            amount,
+            description: "Reverse commission — undo income",
+            customerId: tx.customer_id,
+            accountId:  tx.account_id,
+          },
+          {
+            coaId:      depositCoaId,
+            dc:         "credit",
+            amount,
+            description: "Reverse commission — restore customer balance",
+            customerId: tx.customer_id,
+            accountId:  tx.account_id,
+          },
+        ],
+      });
+
+      if (tx.accounting_je_id) {
+        await client.query(
+          `UPDATE journal_entries SET status = 'reversed' WHERE id = $1`,
+          [tx.accounting_je_id]
+        );
+      }
+    }
+    // Note: transfer_in / transfer_out deletions should go through
+    // reverseTransfer instead — that handles both legs atomically.
+
+    // 2. Soft-delete the transaction
     await client.query(
-      `
-      UPDATE transactions
-      SET status = 'reversed',
-          reversed_at = NOW(),
-          reversed_by = $1,
-          reversal_reason = $2
-      WHERE id = $3
-      `,
+      `UPDATE transactions
+       SET is_deleted = true,
+           deleted_at = NOW(),
+           status     = 'reversed'
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, company_id]
+    );
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      status:  "success",
+      message: "Transaction deleted and accounting entries reversed",
+      data:    tx,
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("deleteTransaction error:", err.message);
+    return res.status(500).json({ status: "error", message: err.message });
+  } finally {
+    client.release();
+  }
+};
+
+
+export const reverseWithdrawal = async (req, res) => {
+  const { transactionId } = req.params;
+  const { reason, staffId } = req.body;
+
+  if (!staffId)
+    return res.status(401).json({ message: "Unauthorized" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // ── 1. Fetch + validate transaction ──────────────────
+    const txRes = await client.query(
+      `SELECT t.id, t.amount, t.account_id, t.status, t.type,
+              t.payment_method, t.accounting_je_id
+       FROM transactions t WHERE t.id = $1 FOR UPDATE`,
+      [transactionId]
+    );
+    if (txRes.rowCount === 0) throw new Error("Transaction not found");
+
+    const tx = txRes.rows[0];
+    if (tx.type !== "withdrawal")  throw new Error("Only withdrawals can be reversed");
+    if (tx.status !== "approved")  throw new Error("Only approved withdrawals can be reversed");
+
+    // ── 2. Fetch account ─────────────────────────────────
+    const accRes = await client.query(
+      `SELECT id, company_id, account_type, customer_id FROM accounts WHERE id = $1`,
+      [tx.account_id]
+    );
+    const account = accRes.rows[0];
+
+    // ── 3. Reverse float movements (existing logic) ──────
+    const floatRes = await client.query(
+      `SELECT id, budget_id, amount FROM float_movements
+       WHERE source_type = 'withdrawal' AND source_id = $1 AND direction = 'debit'`,
+      [transactionId]
+    );
+    for (const fm of floatRes.rows) {
+      await client.query(
+        `UPDATE budgets SET spent = spent - $1 WHERE id = $2`,
+        [fm.amount, fm.budget_id]
+      );
+      await client.query(
+        `INSERT INTO float_movements
+           (budget_id, source_type, source_id, amount, direction, company_id)
+         VALUES ($1,'withdrawal',$2,$3,'credit',
+           (SELECT company_id FROM budgets WHERE id = $1))`,
+        [fm.budget_id, transactionId, fm.amount]
+      );
+    }
+
+    // ── 4. Handle commission reversal ────────────────────
+    const commRes = await client.query(
+      `SELECT id, amount FROM commissions
+       WHERE transaction_id = $1 AND status != 'reversed' FOR UPDATE`,
+      [transactionId]
+    );
+
+    let commissionAmount = 0;
+
+    if (commRes.rowCount > 0) {
+      commissionAmount = parseFloat(commRes.rows[0].amount);
+
+      await client.query(
+        `UPDATE commissions SET status='reversed', reversed_at=NOW(), reversed_by=$1
+         WHERE transaction_id = $2`,
+        [staffId, transactionId]
+      );
+
+      // Reverse the commission transaction row
+      await client.query(
+        `UPDATE transactions
+         SET status='reversed', reversed_at=NOW(), reversed_by=$1, reversal_reason=$2
+         WHERE source_transaction_id = $3 AND type='commission' AND status != 'reversed'`,
+        [staffId, reason || null, transactionId]
+      );
+
+      // Commission reversal JE:
+      // Dr Commission income (4020)   — undo the income
+      // Cr Customer deposits (2010-01) — restore the customer balance
+      const commIncomeCoaId = await resolveCOA(client, account.company_id, "4020");
+      const depositCoaId    = await resolveCOA(client, account.company_id, depositCoaCode(account.account_type));
+
+      await postJournalEntry(client, {
+        companyId:   account.company_id,
+        description: `Commission reversal — withdrawal ${transactionId}`,
+        entryDate:   new Date().toISOString().slice(0, 10),
+        source:      "reversal",
+        sourceId:    commRes.rows[0].id,
+        sourceTable: "commissions",
+        createdBy:   staffId,
+        lines: [
+          {
+            coaId:      commIncomeCoaId,
+            dc:         "debit",
+            amount:     commissionAmount,
+            description: "Reverse commission income",
+            customerId: account.customer_id,
+            accountId:  tx.account_id,
+          },
+          {
+            coaId:      depositCoaId,
+            dc:         "credit",
+            amount:     commissionAmount,
+            description: "Restore customer deposit balance",
+            customerId: account.customer_id,
+            accountId:  tx.account_id,
+          },
+        ],
+      });
+    }
+
+    // ── 5. Mark withdrawal reversed ───────────────────────
+    await client.query(
+      `UPDATE transactions
+       SET status='reversed', reversed_at=NOW(), reversed_by=$1, reversal_reason=$2
+       WHERE id = $3`,
       [staffId, reason || null, transactionId]
     );
 
-    /* 1️⃣ Fetch commission for the transaction */
-const commissionResult = await client.query(
-  `
-  SELECT id, status, amount
-  FROM commissions
-  WHERE transaction_id = $1
-  FOR UPDATE
-  `,
-  [transactionId]
-);
+    // ── 6. Restore customer balance ───────────────────────
+    const totalRefund = parseFloat(tx.amount) + commissionAmount;
+    await client.query(
+      `UPDATE accounts SET balance = balance + $1, last_activity_at = NOW() WHERE id = $2`,
+      [totalRefund, tx.account_id]
+    );
 
-let commissionAmount = 0;
+    // ── 7. Reversal journal entry ─────────────────────────
+    // Dr  Cash / Float          — asset ↑  (money comes back in)
+    // Cr  Customer deposits     — liability ↑  (we owe the customer again)
+    const cashCode    = cashCoaCode(tx.payment_method);
+    const cashCoaId    = await resolveCOA(client, account.company_id, cashCode);
+    const depositCoaId = await resolveCOA(client, account.company_id, depositCoaCode(account.account_type));
 
-if (commissionResult.rowCount > 0) {
-  commissionAmount = parseFloat(commissionResult.rows[0].amount);
-  
-  console.log(`Commission amount: ${commissionAmount}`)
-  await client.query(
-    `
-    UPDATE commissions
-    SET
-      status = 'reversed',
-      reversed_at = NOW(),
-      reversed_by = $1
-    WHERE transaction_id = $2
-    `,
-    [staffId, transactionId]
-  );
+    await postJournalEntry(client, {
+      companyId:   account.company_id,
+      description: `Withdrawal reversal${reason ? ` — ${reason}` : ""}`,
+      entryDate:   new Date().toISOString().slice(0, 10),
+      source:      "reversal",
+      sourceId:    tx.id,
+      sourceTable: "transactions",
+      createdBy:   staffId,
+      lines: [
+        {
+          coaId:      cashCoaId,
+          dc:         "debit",
+          amount:     parseFloat(tx.amount),
+          description: "Cash returned / float restored",
+          customerId: account.customer_id,
+          accountId:  tx.account_id,
+          staffId,
+        },
+        {
+          coaId:      depositCoaId,
+          dc:         "credit",
+          amount:     parseFloat(tx.amount),
+          description: "Customer deposit liability restored",
+          customerId: account.customer_id,
+          accountId:  tx.account_id,
+          staffId,
+        },
+      ],
+    });
 
-  const commissionTxRes = await client.query(
-  `
-  SELECT id
-  FROM transactions
-  WHERE source_transaction_id = $1
-    AND type = 'commission'
-    AND status != 'reversed'
-  FOR UPDATE
-  `,
-  [transactionId] // withdrawal ID
-);
-
-if (commissionTxRes.rowCount === 0) {
-  console.log('No commission transaction found to reverse');
-} else {
-  const commissionTxId = commissionTxRes.rows[0].id;
-    console.log(`Commission transaction id: ${commissionTxId}`);
-
-  // Update commission transaction row
-  await client.query(
-    `
-    UPDATE transactions
-    SET status = 'reversed',
-        reversed_at = NOW(),
-        reversed_by = $1,
-        reversal_reason = $2
-    WHERE id = $3
-    `,
-    [staffId, reason || null, commissionTxId]
-  );
-
-  console.log('Commission transaction reversed:', commissionTxId);
-}
-}
-
-
-
-const refundAMount = Number(transaction.amount) + Number(commissionAmount);
-const totalRefund = Math.round(refundAMount * 100) / 100;
-await client.query(
-  `
-  UPDATE accounts
-  SET balance = balance + $1
-  WHERE id = $2
-  `,
-  [totalRefund, transaction.account_id]
-);
+    // Also reverse the original approved JE if it exists
+    if (tx.accounting_je_id) {
+      await client.query(
+        `UPDATE journal_entries
+         SET status = 'reversed', reversed_by_entry_id = (
+           SELECT id FROM journal_entries
+           WHERE source_id = $1 AND source = 'reversal' AND status = 'posted'
+           ORDER BY created_at DESC LIMIT 1
+         )
+         WHERE id = $2`,
+        [tx.id, tx.accounting_je_id]
+      );
+    }
 
     await client.query("COMMIT");
 
@@ -888,18 +999,15 @@ await client.query(
       message: "Withdrawal reversed successfully",
       data: {
         transactionId,
-        refundedAmount: transaction.amount,
-        floatRestored: floatRes.rowCount > 0
-      }
+        refundedAmount: totalRefund,
+        floatRestored:  floatRes.rowCount > 0,
+      },
     });
 
-  } catch (error) {
+  } catch (err) {
     await client.query("ROLLBACK");
-
-    return res.status(400).json({
-      success: false,
-      message: error.message || "Failed to reverse withdrawal"
-    });
+    console.error("reverseWithdrawal error:", err.message);
+    return res.status(400).json({ success: false, message: err.message });
   } finally {
     client.release();
   }
@@ -907,127 +1015,95 @@ await client.query(
 
 export const transferBetweenAccounts = async (req, res) => {
   const {
-    from_account_id,
-    to_account_id,
-    amount,
-    company_id,
-    created_by,
-    created_by_type = "staff",
-    description,
+    from_account_id, to_account_id, amount,
+    company_id, created_by, created_by_type = "staff", description,
   } = req.body;
-  console.log(req.body);
-  if (!from_account_id || !to_account_id || !amount || amount <= 0) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid transfer data",
-    });
-  }
 
-  if (from_account_id === to_account_id) {
-    return res.status(400).json({
-      success: false,
-      message: "Cannot transfer to the same account",
-    });
-  }
+  if (!from_account_id || !to_account_id || !amount || amount <= 0)
+    return res.status(400).json({ success: false, message: "Invalid transfer data" });
+  if (from_account_id === to_account_id)
+    return res.status(400).json({ success: false, message: "Cannot transfer to the same account" });
 
   const client = await pool.connect();
-
   try {
     await client.query("BEGIN");
 
-    /* 1️⃣ Lock both accounts */
+    // ── Lock both accounts ────────────────────────────────
     const accountsRes = await client.query(
-      `
-      SELECT id, balance
-      FROM accounts
-      WHERE id IN ($1, $2)
-        AND company_id = $3
-      FOR UPDATE
-      `,
+      `SELECT id, balance, customer_id, account_type
+       FROM accounts
+       WHERE id IN ($1,$2) AND company_id = $3 FOR UPDATE`,
       [from_account_id, to_account_id, company_id]
     );
+    if (accountsRes.rowCount !== 2) throw new Error("One or both accounts not found");
 
-    if (accountsRes.rowCount !== 2) {
-      throw new Error("One or both accounts not found");
-    }
+    const fromAcc = accountsRes.rows.find(a => a.id === from_account_id);
+    const toAcc   = accountsRes.rows.find(a => a.id === to_account_id);
 
-    const fromAccount = accountsRes.rows.find(
-      (a) => a.id === from_account_id
-    );
-    const toAccount = accountsRes.rows.find(
-      (a) => a.id === to_account_id
-    );
+    if (Number(fromAcc.balance) < Number(amount)) throw new Error("Insufficient balance");
 
-    if (Number(fromAccount.balance) < Number(amount)) {
-      throw new Error("Insufficient balance");
-    }
-
-    /* 2️⃣ Debit sender */
+    // ── Update balances ───────────────────────────────────
     await client.query(
-      `
-      UPDATE accounts
-      SET balance = balance - $1
-      WHERE id = $2
-      `,
+      `UPDATE accounts SET balance = balance - $1, last_activity_at = NOW() WHERE id = $2`,
       [amount, from_account_id]
     );
-
-    /* 3️⃣ Credit receiver */
     await client.query(
-      `
-      UPDATE accounts
-      SET balance = balance + $1
-      WHERE id = $2
-      `,
+      `UPDATE accounts SET balance = balance + $1, last_activity_at = NOW() WHERE id = $2`,
       [amount, to_account_id]
     );
 
-    /* 4️⃣ Log transactions */
+    // ── Insert transaction records ────────────────────────
     const outTx = await client.query(
-      `
-      INSERT INTO transactions (
-        account_id,
-        company_id,
-        type,
-        amount,
-        description,
-        created_by,
-        created_by_type
-      ) VALUES ($1, $2, 'transfer_out', $3, $4, $5, $6)
-      RETURNING *
-      `,
-      [
-        from_account_id,
-        company_id,
-        amount,
-        description || "Transfer to another account",
-        created_by,
-        created_by_type,
-      ]
+      `INSERT INTO transactions
+         (account_id, company_id, type, amount, description, created_by, created_by_type)
+       VALUES ($1,$2,'transfer_out',$3,$4,$5,$6) RETURNING *`,
+      [from_account_id, company_id, amount, description || "Transfer to another account", created_by, created_by_type]
+    );
+    const inTx = await client.query(
+      `INSERT INTO transactions
+         (account_id, company_id, type, amount, description, created_by, created_by_type,
+          source_transaction_id)
+       VALUES ($1,$2,'transfer_in',$3,$4,$5,$6,$7) RETURNING *`,
+      [to_account_id, company_id, amount, description || "Transfer from another account",
+       created_by, created_by_type, outTx.rows[0].id]
     );
 
-    const inTx = await client.query(
-      `
-      INSERT INTO transactions (
-        account_id,
-        company_id,
-        type,
-        amount,
-        description,
-        created_by,
-        created_by_type
-      ) VALUES ($1, $2, 'transfer_in', $3, $4, $5, $6)
-      RETURNING *
-      `,
-      [
-        to_account_id,
-        company_id,
-        amount,
-        description || "Transfer from another account",
-        created_by,
-        created_by_type,
-      ]
-    );
+    // ── Resolve COA accounts ──────────────────────────────
+    // Both sides use the deposits liability account —
+    // just different customers attached to each line.
+    const fromDepositCoaId = await resolveCOA(client, company_id, depositCoaCode(fromAcc.account_type));
+    const toDepositCoaId   = await resolveCOA(client, company_id, depositCoaCode(toAcc.account_type));
+
+    // ── Post journal entry ────────────────────────────────
+    await postJournalEntry(client, {
+      companyId:   company_id,
+      description: description || "Transfer between customer accounts",
+      entryDate:   new Date().toISOString().slice(0, 10),
+      source:      "transfer",
+      sourceId:    outTx.rows[0].id,
+      sourceTable: "transactions",
+      createdBy:   created_by,
+      lines: [
+        {
+          coaId:      fromDepositCoaId,
+          dc:         "debit",
+          amount:     Number(amount),
+          description: "From account — liability reduces",
+          customerId: fromAcc.customer_id,
+          accountId:  from_account_id,
+          staffId:    created_by,
+        },
+        {
+          coaId:      toDepositCoaId,
+          dc:         "credit",
+          amount:     Number(amount),
+          description: "To account — liability increases",
+          customerId: toAcc.customer_id,
+          accountId:  to_account_id,
+          staffId:    created_by,
+        },
+      ],
+    });
 
     await client.query("COMMIT");
 
@@ -1035,139 +1111,140 @@ export const transferBetweenAccounts = async (req, res) => {
       success: true,
       message: "Transfer completed successfully",
       data: {
-        from_account_id,
-        to_account_id,
-        amount,
-        debit_transaction: outTx.rows[0],
+        from_account_id, to_account_id, amount,
+        debit_transaction:  outTx.rows[0],
         credit_transaction: inTx.rows[0],
       },
     });
 
-  } catch (error) {
+  } catch (err) {
     await client.query("ROLLBACK");
-    return res.status(400).json({
-      success: false,
-      message: error.message || "Transfer failed",
-    });
+    console.error("transferBetweenAccounts error:", err.message);
+    return res.status(400).json({ success: false, message: err.message });
   } finally {
     client.release();
   }
 };
+;
 
 export const reverseTransfer = async (req, res) => {
   const { transactionId } = req.params;
   const { staffId, reason } = req.body;
 
-  if (!staffId) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
+  if (!staffId) return res.status(401).json({ message: "Unauthorized" });
 
   const client = await pool.connect();
-
   try {
     await client.query("BEGIN");
 
-    /* 1️⃣ Lock the original transaction */
+    // ── 1. Fetch the clicked transaction ─────────────────
     const txRes = await client.query(
-      `
-      SELECT *
-      FROM transactions
-      WHERE id = $1
-      FOR UPDATE
-      `,
+      `SELECT * FROM transactions WHERE id = $1 FOR UPDATE`,
       [transactionId]
     );
-
-    if (txRes.rowCount === 0) {
-      throw new Error("Transaction not found");
-    }
+    if (txRes.rowCount === 0) throw new Error("Transaction not found");
 
     const tx = txRes.rows[0];
-
-    if (!["transfer_out", "transfer_in"].includes(tx.type)) {
+    if (!["transfer_out","transfer_in"].includes(tx.type))
       throw new Error("Not a transfer transaction");
-    }
-
-    if (tx.status !== "approved") {
+    if (tx.status !== "approved")
       throw new Error("Only approved transfers can be reversed");
-    }
 
-    /* 2️⃣ Find the linked transaction */
-    const linkedTxRes = await client.query(
-      `
-      SELECT *
-      FROM transactions
-      WHERE source_transaction_id = $1
-         OR id = $1
-      FOR UPDATE
-      `,
-      [tx.source_transaction_id || tx.id]
+    // ── 2. Find the paired transaction ───────────────────
+    const linkedRes = await client.query(
+      `SELECT * FROM transactions
+       WHERE (source_transaction_id = $1 OR id = $1 OR source_transaction_id = $2)
+         AND id != $1
+       FOR UPDATE`,
+      [tx.source_transaction_id || tx.id, tx.id]
     );
+    if (linkedRes.rowCount === 0) throw new Error("Linked transfer transaction not found");
 
-    if (linkedTxRes.rowCount !== 2) {
-      throw new Error("Linked transfer transaction not found");
-    }
+    const transferOut = [tx, ...linkedRes.rows].find(t => t.type === "transfer_out");
+    const transferIn  = [tx, ...linkedRes.rows].find(t => t.type === "transfer_in");
 
-    const transferOut = linkedTxRes.rows.find(
-      (t) => t.type === "transfer_out"
-    );
-    const transferIn = linkedTxRes.rows.find(
-      (t) => t.type === "transfer_in"
-    );
+    if (!transferOut || !transferIn) throw new Error("Invalid transfer pair");
 
-    if (!transferOut || !transferIn) {
-      throw new Error("Invalid transfer pair");
-    }
-
-    /* 3️⃣ Reverse balances */
+    // ── 3. Reverse balances ───────────────────────────────
     await client.query(
-      `
-      UPDATE accounts
-      SET balance = balance + $1
-      WHERE id = $2
-      `,
+      `UPDATE accounts SET balance = balance + $1, last_activity_at = NOW() WHERE id = $2`,
       [transferOut.amount, transferOut.account_id]
     );
-
     await client.query(
-      `
-      UPDATE accounts
-      SET balance = balance - $1
-      WHERE id = $2
-      `,
+      `UPDATE accounts SET balance = balance - $1, last_activity_at = NOW() WHERE id = $2`,
       [transferIn.amount, transferIn.account_id]
     );
 
-    /* 4️⃣ Mark both transactions reversed */
+    // ── 4. Mark both reversed ─────────────────────────────
     await client.query(
-      `
-      UPDATE transactions
-      SET status = 'reversed',
-          reversed_at = NOW(),
-          reversed_by = $1,
-          reversal_reason = $2
-      WHERE id IN ($3, $4)
-      `,
+      `UPDATE transactions
+       SET status='reversed', reversed_at=NOW(), reversed_by=$1, reversal_reason=$2
+       WHERE id IN ($3,$4)`,
       [staffId, reason || null, transferOut.id, transferIn.id]
     );
+
+    // ── 5. Fetch account info for COA resolution ─────────
+    const fromAccRes = await client.query(
+      `SELECT id, company_id, customer_id, account_type
+       FROM accounts WHERE id = $1`,
+      [transferOut.account_id]
+    );
+    const toAccRes = await client.query(
+      `SELECT id, company_id, customer_id, account_type
+       FROM accounts WHERE id = $1`,
+      [transferIn.account_id]
+    );
+    const fromAcc  = fromAccRes.rows[0];
+    const toAcc    = toAccRes.rows[0];
+    const companyId = fromAcc.company_id;
+
+    const fromDepositCoaId = await resolveCOA(client, companyId, depositCoaCode(fromAcc.account_type));
+    const toDepositCoaId   = await resolveCOA(client, companyId, depositCoaCode(toAcc.account_type));
+
+    // ── 6. Post reversal journal entry ───────────────────
+    // Mirror of original: debit to-account, credit from-account
+    await postJournalEntry(client, {
+      companyId,
+      description: `Transfer reversal${reason ? ` — ${reason}` : ""}`,
+      entryDate:   new Date().toISOString().slice(0, 10),
+      source:      "reversal",
+      sourceId:    transferOut.id,
+      sourceTable: "transactions",
+      createdBy:   staffId,
+      lines: [
+        {
+          coaId:      toDepositCoaId,
+          dc:         "debit",
+          amount:     Number(transferIn.amount),
+          description: "Reverse transfer — undo credit to recipient",
+          customerId: toAcc.customer_id,
+          accountId:  transferIn.account_id,
+          staffId,
+        },
+        {
+          coaId:      fromDepositCoaId,
+          dc:         "credit",
+          amount:     Number(transferOut.amount),
+          description: "Reverse transfer — restore sender balance",
+          customerId: fromAcc.customer_id,
+          accountId:  transferOut.account_id,
+          staffId,
+        },
+      ],
+    });
 
     await client.query("COMMIT");
 
     return res.json({
       success: true,
       message: "Transfer reversed successfully",
-      data: {
-        reversed_transactions: [transferOut.id, transferIn.id],
-      },
+      data: { reversed_transactions: [transferOut.id, transferIn.id] },
     });
 
-  } catch (error) {
+  } catch (err) {
     await client.query("ROLLBACK");
-
-    return res.status(400).json({
-      success: false,
-      message: error.message || "Failed to reverse transfer",
-    });
+    console.error("reverseTransfer error:", err.message);
+    return res.status(400).json({ success: false, message: err.message });
   } finally {
     client.release();
   }
