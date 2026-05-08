@@ -613,10 +613,10 @@ export const deleteTransaction = async (req, res) => {
     // 1. Fetch full transaction row
     const txResult = await client.query(
       `SELECT t.*, a.account_type, a.customer_id, a.company_id AS acc_company_id
-       FROM transactions t
-       LEFT JOIN accounts a ON a.id = t.account_id
-       WHERE t.id = $1 AND t.company_id = $2 AND t.is_deleted = false
-       FOR UPDATE`,
+      FROM transactions t
+      JOIN accounts a ON a.id = t.account_id
+      WHERE t.id = $1 AND t.company_id = $2 AND t.is_deleted = false
+      FOR UPDATE`,
       [id, company_id]
     );
 
