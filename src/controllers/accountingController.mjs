@@ -534,63 +534,227 @@ export const getProfitAndLoss = async (req, res) => {
 
 export const getBalanceSheet = async (req, res) => {
   const { companyId } = req.params;
-  const { asOf } = req.query; // optional date
+  const { asOf } = req.query;
 
-  const dateFilter = asOf ? `AND je.entry_date <= '${asOf}'` : "";
+  const params = [companyId];
+  let dateFilter = "";
+
+  if (asOf) {
+    params.push(asOf);
+    dateFilter = `AND je.entry_date <= $2`;
+  }
 
   try {
+
+    // =========================
+    // BALANCE SHEET ACCOUNTS
+    // =========================
+
     const result = await pool.query(
-      `SELECT
-        coa.code, coa.name, coa.account_type, coa.category,
-        coa.is_sub_account, coa.parent_id,
+      `
+      SELECT
+        coa.code,
+        coa.name,
+        coa.account_type,
+        coa.category,
+        coa.is_sub_account,
+        coa.parent_id,
+
         CASE coa.normal_balance
-          WHEN 'debit'  THEN
-            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0) -
-            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0)
+
+          WHEN 'debit' THEN
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'debit'), 0)
+            -
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'credit'), 0)
+
           WHEN 'credit' THEN
-            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0) -
-            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0)
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'credit'), 0)
+            -
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'debit'), 0)
+
         END AS amount
+
       FROM chart_of_accounts coa
-      LEFT JOIN journal_entry_lines jel ON jel.coa_id = coa.id
-      LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id
-        AND je.status = 'posted'
-        AND je.company_id = $1
-        ${dateFilter}
-      WHERE coa.company_id  = $1
+
+      LEFT JOIN (
+        journal_entry_lines jel
+        INNER JOIN journal_entries je
+          ON je.id = jel.journal_entry_id
+          AND je.status = 'posted'
+          AND je.company_id = $1
+          ${dateFilter}
+      )
+      ON jel.coa_id = coa.id
+
+      WHERE coa.company_id = $1
         AND coa.account_type IN ('asset', 'liability', 'equity')
-        AND coa.is_active    = true
-        AND coa.is_deleted   = false
+        AND coa.is_active = true
+        AND coa.is_deleted = false
+
       GROUP BY coa.id
+
       ORDER BY
-        CASE coa.account_type WHEN 'asset' THEN 1 WHEN 'liability' THEN 2 ELSE 3 END,
-        coa.code`,
-      [companyId]
+        CASE coa.account_type
+          WHEN 'asset' THEN 1
+          WHEN 'liability' THEN 2
+          ELSE 3
+        END,
+        coa.code
+      `,
+      params
     );
 
-    const assets      = result.rows.filter(r => r.account_type === "asset");
-    const liabilities = result.rows.filter(r => r.account_type === "liability");
-    const equity      = result.rows.filter(r => r.account_type === "equity");
+    // =========================
+    // PROFIT & LOSS CALCULATION
+    // =========================
 
-    const totalAssets      = assets.reduce((s, r)      => s + Number(r.amount), 0);
-    const totalLiabilities = liabilities.reduce((s, r) => s + Number(r.amount), 0);
-    const totalEquity      = equity.reduce((s, r)      => s + Number(r.amount), 0);
+    const pnlResult = await pool.query(
+      `
+      SELECT
+        coa.account_type,
+
+        CASE coa.normal_balance
+
+          WHEN 'credit' THEN
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'credit'), 0)
+            -
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'debit'), 0)
+
+          WHEN 'debit' THEN
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'debit'), 0)
+            -
+            COALESCE(SUM(jel.amount)
+              FILTER (WHERE jel.debit_credit = 'credit'), 0)
+
+        END AS amount
+
+      FROM chart_of_accounts coa
+
+      LEFT JOIN (
+        journal_entry_lines jel
+        INNER JOIN journal_entries je
+          ON je.id = jel.journal_entry_id
+          AND je.status = 'posted'
+          AND je.company_id = $1
+          ${dateFilter}
+      )
+      ON jel.coa_id = coa.id
+
+      WHERE coa.company_id = $1
+        AND coa.account_type IN ('income', 'expense')
+        AND coa.is_active = true
+        AND coa.is_deleted = false
+
+      GROUP BY coa.id
+      `,
+      params
+    );
+
+    const assets = result.rows.filter(
+      r => r.account_type === "asset"
+    );
+
+    const liabilities = result.rows.filter(
+      r => r.account_type === "liability"
+    );
+
+    const equity = result.rows.filter(
+      r => r.account_type === "equity"
+    );
+
+    // =========================
+    // NET PROFIT
+    // =========================
+
+    const incomeAccounts = pnlResult.rows.filter(
+      r => r.account_type === "income"
+    );
+
+    const expenseAccounts = pnlResult.rows.filter(
+      r => r.account_type === "expense"
+    );
+
+    const totalIncome = incomeAccounts.reduce(
+      (s, r) => s + Number(r.amount),
+      0
+    );
+
+    const totalExpenses = expenseAccounts.reduce(
+      (s, r) => s + Number(r.amount),
+      0
+    );
+
+    const netProfit = totalIncome - totalExpenses;
+
+    // Add virtual retained earnings/current earnings line
+
+    const currentYearProfitAccount = equity.find(
+    acc => acc.code === "3030"
+    );
+
+    if (currentYearProfitAccount) {
+      currentYearProfitAccount.amount =
+        Number(currentYearProfitAccount.amount) + netProfit;
+    }
+
+    // =========================
+    // TOTALS
+    // =========================
+
+    const totalAssets = assets.reduce(
+      (s, r) => s + Number(r.amount),
+      0
+    );
+
+    const totalLiabilities = liabilities.reduce(
+      (s, r) => s + Number(r.amount),
+      0
+    );
+
+    const totalEquity = equity.reduce(
+      (s, r) => s + Number(r.amount),
+      0
+    );
 
     return res.json({
       status: "success",
-      data:   { assets, liabilities, equity },
+
+      data: {
+        assets,
+        liabilities,
+        equity
+      },
+
       summary: {
         totalAssets,
         totalLiabilities,
         totalEquity,
-        isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+        netProfit,
+
+        isBalanced:
+          Math.abs(
+            totalAssets -
+            (totalLiabilities + totalEquity)
+          ) < 0.01
       }
     });
+
   } catch (err) {
-    return res.status(500).json({ status: "error", message: err.message });
+
+    return res.status(500).json({
+      status: "error",
+      message: err.message
+    });
+
   }
 };
-
 // ─────────────────────────────────────────────────────────────
 // ACCOUNTING PERIODS
 // ─────────────────────────────────────────────────────────────

@@ -147,7 +147,7 @@ export async function postJournalEntry(client, opts) {
 export function cashCoaCode(paymentMethod) {
   if (paymentMethod === "momo")  return "1010-03"; // MoMo float
   if (paymentMethod === "bank")  return "1020-01"; // Bank account
-  return "1010-02";                                // Mobile banker cash (default)
+  return "1010";                                // cash cash equivalent (default)
 }
 
 // ─────────────────────────────────────────────────────────────
