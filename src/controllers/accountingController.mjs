@@ -559,6 +559,7 @@ export const getBalanceSheet = async (req, res) => {
         coa.category,
         coa.is_sub_account,
         coa.parent_id,
+        coa.normal_balance,
 
         CASE coa.normal_balance
 
@@ -708,10 +709,17 @@ export const getBalanceSheet = async (req, res) => {
     // TOTALS
     // =========================
 
-    const totalAssets = assets.reduce(
-      (s, r) => s + Number(r.amount),
-      0
-    );
+    const totalAssets = assets.reduce((sum, acc) => {
+
+      const amount = Number(acc.amount);
+
+      return sum + (
+        acc.normal_balance === "credit"
+          ? -amount
+          : amount
+      );
+
+    }, 0);
 
     const totalLiabilities = liabilities.reduce(
       (s, r) => s + Number(r.amount),
