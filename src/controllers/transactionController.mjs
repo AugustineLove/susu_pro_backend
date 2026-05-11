@@ -456,40 +456,86 @@ export const approveTransaction = async (req, res) => {
 
     const tellerFloatCode = "1010-02";
 
-    const tellerFloatRes = await client.query(
-      `
-      SELECT
-        id,
-        name,
-        current_balance
-      FROM chart_of_accounts
-      WHERE company_id = $1
-        AND code = $2
-      LIMIT 1
-      FOR UPDATE
-      `,
-      [account.company_id, tellerFloatCode]
-    );
+/**
+ * Fetch teller float balance dynamically
+ * from posted journal entries
+ */
+const tellerFloatRes = await client.query(
+  `
+  SELECT
+    coa.id,
+    coa.code,
+    coa.name,
+    coa.normal_balance,
 
-    if (tellerFloatRes.rowCount === 0) {
-      throw new Error(
-        "Teller float account (1010-02) not found"
-      );
-    }
+    CASE coa.normal_balance
 
-    const tellerFloat = tellerFloatRes.rows[0];
+      WHEN 'debit' THEN
+        COALESCE(SUM(jel.amount)
+          FILTER (
+            WHERE jel.debit_credit = 'debit'
+          ), 0)
+        -
+        COALESCE(SUM(jel.amount)
+          FILTER (
+            WHERE jel.debit_credit = 'credit'
+          ), 0)
 
-    const tellerFloatBalance = parseFloat(
-      tellerFloat.current_balance || 0
-    );
+      WHEN 'credit' THEN
+        COALESCE(SUM(jel.amount)
+          FILTER (
+            WHERE jel.debit_credit = 'credit'
+          ), 0)
+        -
+        COALESCE(SUM(jel.amount)
+          FILTER (
+            WHERE jel.debit_credit = 'debit'
+          ), 0)
 
-    if (tellerFloatBalance < amount) {
-      throw new Error(
-        `Insufficient teller float balance. Available float: GHS ${tellerFloatBalance.toFixed(
-          2
-        )}`
-      );
-    }
+            END AS balance
+
+          FROM chart_of_accounts coa
+
+          LEFT JOIN (
+            journal_entry_lines jel
+            INNER JOIN journal_entries je
+              ON je.id = jel.journal_entry_id
+              AND je.status = 'posted'
+              AND je.company_id = $1
+          )
+            ON jel.coa_id = coa.id
+
+          WHERE coa.company_id = $1
+            AND coa.code = $2
+            AND coa.is_active = true
+            AND coa.is_deleted = false
+
+          GROUP BY coa.id
+
+          LIMIT 1
+          `,
+          [account.company_id, tellerFloatCode]
+        );
+
+        if (tellerFloatRes.rowCount === 0) {
+          throw new Error(
+            "Teller float account (1010-02) not found"
+          );
+        }
+
+        const tellerFloat = tellerFloatRes.rows[0];
+
+        const tellerFloatBalance = parseFloat(
+          tellerFloat.balance || 0
+        );
+
+        if (tellerFloatBalance < amount) {
+          throw new Error(
+            `Insufficient teller float balance. Available float: GHS ${tellerFloatBalance.toFixed(
+              2
+            )}`
+          );
+        }
 
     // =====================================================
     // 4. UPDATE CUSTOMER ACCOUNT BALANCE
