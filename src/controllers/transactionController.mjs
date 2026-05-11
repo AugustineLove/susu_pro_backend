@@ -460,7 +460,7 @@ export const approveTransaction = async (req, res) => {
       `
       SELECT
         id,
-        account_name,
+        name,
         current_balance
       FROM chart_of_accounts
       WHERE company_id = $1
