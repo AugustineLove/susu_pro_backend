@@ -1,5 +1,6 @@
 import pool from '../db.mjs';
 import { v4 as uuidv4 } from 'uuid';
+import { resolveCOA } from '../services/accountingHelper.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -1255,7 +1256,7 @@ export const approveLoan = async (req, res) => {
       await client.query(
         `INSERT INTO loan_transactions (
            loan_id, 
-           transaction_type, 
+           type, 
            amount, 
            transaction_date, 
            status,
