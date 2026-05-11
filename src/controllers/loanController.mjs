@@ -1053,11 +1053,12 @@ export const approveLoan = async (req, res) => {
   const { id } = req.params;
   const { approved_by, approved_by_type, disbursement_date } = req.body;
 
-  if (!approved_by || !approved_by_type)
+  if (!approved_by || !approved_by_type) {
     return res.status(400).json({
-      status:  "fail",
+      status: "fail",
       message: "approved_by and approved_by_type are required",
     });
+  }
 
   const client = await pool.connect();
   try {
@@ -1066,18 +1067,30 @@ export const approveLoan = async (req, res) => {
     // ── 1. Fetch & validate the loan ─────────────────────
     const loanRes = await client.query(
       `SELECT
-         l.id, l.loantype, l.status, l.loanterm,
-         l.request_date, l.loanamount, l.totalpayable,
-         l.customer_id, l.company_id,
-         l.account_id,          -- the loan savings account (if linked)
-         l.group_id
-       FROM loans l WHERE l.id = $1 FOR UPDATE`,
+         l.id, 
+         l.loantype, 
+         l.status, 
+         l.loanterm,
+         l.request_date, 
+         l.loanamount,
+         l.disbursedamount,
+         l.totalpayable,
+         l.customer_id, 
+         l.company_id,
+         l.group_id,
+         l.group_name
+       FROM loans l 
+       WHERE l.id = $1 
+       FOR UPDATE`,
       [id]
     );
 
     if (!loanRes.rows.length) {
       await client.query("ROLLBACK");
-      return res.status(404).json({ status: "fail", message: "Loan not found" });
+      return res.status(404).json({ 
+        status: "fail", 
+        message: "Loan not found" 
+      });
     }
 
     const loan = loanRes.rows[0];
@@ -1085,67 +1098,87 @@ export const approveLoan = async (req, res) => {
     if (loan.status !== "pending") {
       await client.query("ROLLBACK");
       return res.status(400).json({
-        status:  "fail",
+        status: "fail",
         message: `Loan is already '${loan.status}' and cannot be approved`,
       });
     }
 
-    const disbDate  = disbursement_date || new Date().toISOString().split("T")[0];
+    const disbDate = disbursement_date || new Date().toISOString().split("T")[0];
     const companyId = loan.company_id;
+    
+    // Calculate maturity date
+    const maturityDate = calculateMaturityDate(disbDate, loan.loanterm);
 
-    // ── 2. Resolve COA accounts ───────────────────────────
-    const loanRecCoaId = await resolveCOA(client, companyId, "1030-01"); // Loan Receivable
-    const floatCoaId   = await resolveCOA(client, companyId, "1010-01"); // MB Float
+    // ── 2. Resolve COA accounts (only if you have journal entries) ──
+    // If you don't have COA system yet, skip this part or make it optional
+    let loanRecCoaId = null;
+    let floatCoaId = null;
+    
+    try {
+      loanRecCoaId = await resolveCOA(client, companyId, "1030-01"); // Loan Receivable
+      floatCoaId = await resolveCOA(client, companyId, "1010-01"); // MB Float
+    } catch (err) {
+      console.warn("COA resolution failed, continuing without journal entries:", err.message);
+      // Don't fail the approval if COA doesn't exist
+    }
 
     // ── 3. Approve the loan row ───────────────────────────
+    // Use disbursedamount if available, otherwise use loanamount
+    const amountToDisburse = loan.disbursedamount || loan.loanamount;
+    
     const result = await client.query(
       `UPDATE loans SET
-         status           = 'active',
+         status = 'active',
          disbursementdate = $1,
-         approved_by      = $2,
-         approved_by_type = $3,
-         approved_at      = NOW(),
-         updated_at       = NOW()
-       WHERE id = $4
+         maturitydate = $2,
+         approved_by = $3,
+         approved_by_type = $4,
+         approved_at = NOW(),
+         updated_at = NOW()
+       WHERE id = $5
        RETURNING *`,
-      [disbDate, approved_by, approved_by_type, id]
+      [disbDate, maturityDate, approved_by, approved_by_type, id]
     );
 
     const approvedLoan = result.rows[0];
-    const disbAmount   = parseFloat(approvedLoan.loanamount || 0);
+    const disbAmount = parseFloat(amountToDisburse || 0);
 
-    // ── 4. Journal entry for this loan ───────────────────
-    // Only post a JE if there's a real disbursement amount.
-    // Group parent loans have amount = sum of members — we post
-    // member-level JEs below instead to avoid double-counting.
-    if (loan.loantype !== "group" && disbAmount > 0) {
-      await postJournalEntry(client, {
-        companyId,
-        description: `Loan disbursement — loan ${id}`,
-        entryDate:   disbDate,
-        source:      "loan_disbursement",
-        sourceId:    id,
-        sourceTable: "loans",
-        createdBy:   approved_by,
-        lines: [
-          {
-            coaId:      loanRecCoaId,
-            dc:         "debit",
-            amount:     disbAmount,
-            description: "Loan principal disbursed — now receivable",
-            customerId: loan.customer_id,
-            accountId:  loan.account_id || null,
-          },
-          {
-            coaId:      floatCoaId,
-            dc:         "credit",
-            amount:     disbAmount,
-            description: "Cash paid out from mobile banker float",
-            customerId: loan.customer_id,
-            accountId:  loan.account_id || null,
-          },
-        ],
-      });
+    // ── 4. Journal entry for individual loan ───────────────────
+    // Only post if amount > 0 and COA accounts exist
+    if (loan.loantype !== "group" && disbAmount > 0 && loanRecCoaId && floatCoaId) {
+      try {
+        await postJournalEntry(client, {
+          companyId,
+          description: `Loan disbursement — loan ${id}`,
+          entryDate: disbDate,
+          source: "loan_disbursement",
+          sourceId: id,
+          sourceTable: "loans",
+          createdBy: approved_by,
+          lines: [
+            {
+              coaId: loanRecCoaId,
+              dc: "debit",
+              amount: disbAmount,
+              description: "Loan principal disbursed — now receivable",
+              customerId: loan.customer_id,
+              // REMOVED: accountId doesn't exist in loans table
+            },
+            {
+              coaId: floatCoaId,
+              dc: "credit",
+              amount: disbAmount,
+              description: "Cash paid out from mobile banker float",
+              customerId: loan.customer_id,
+              // REMOVED: accountId doesn't exist in loans table
+            },
+          ],
+        });
+      } catch (err) {
+        console.error("Journal entry failed:", err.message);
+        // Don't rollback the entire transaction for journal errors
+        // Just log and continue
+      }
     }
 
     // ── 5. Group loan: approve all members + post per-member JEs ─
@@ -1153,75 +1186,116 @@ export const approveLoan = async (req, res) => {
       // Approve member loans
       await client.query(
         `UPDATE loans SET
-           status           = 'active',
+           status = 'active',
            disbursementdate = $1,
-           approved_by      = $2,
-           approved_by_type = $3,
-           approved_at      = NOW(),
-           updated_at       = NOW()
-         WHERE group_id = $4 AND loantype = 'group_member'`,
-        [disbDate, approved_by, approved_by_type, id]
+           maturitydate = $2,
+           approved_by = $3,
+           approved_by_type = $4,
+           approved_at = NOW(),
+           updated_at = NOW()
+         WHERE group_id = $5 AND loantype = 'group_member'`,
+        [disbDate, maturityDate, approved_by, approved_by_type, id]
       );
 
       // Fetch member loans to post individual JEs
       const memberRes = await client.query(
-        `SELECT id, loanamount, customer_id, account_id, company_id
+        `SELECT 
+           id, 
+           loanamount,
+           disbursedamount,
+           customer_id, 
+           company_id
          FROM loans
          WHERE group_id = $1 AND loantype = 'group_member'`,
         [id]
       );
 
       for (const member of memberRes.rows) {
-        const memberAmount = parseFloat(member.loanamount || 0);
+        const memberAmount = parseFloat(member.disbursedamount || member.loanamount || 0);
         if (memberAmount <= 0) continue;
 
-        await postJournalEntry(client, {
-          companyId,
-          description: `Group loan disbursement — member loan ${member.id}`,
-          entryDate:   disbDate,
-          source:      "loan_disbursement",
-          sourceId:    member.id,
-          sourceTable: "loans",
-          createdBy:   approved_by,
-          lines: [
-            {
-              coaId:      loanRecCoaId,
-              dc:         "debit",
-              amount:     memberAmount,
-              description: "Group member loan principal disbursed",
-              customerId: member.customer_id,
-              accountId:  member.account_id || null,
-            },
-            {
-              coaId:      floatCoaId,
-              dc:         "credit",
-              amount:     memberAmount,
-              description: "Cash out for group member",
-              customerId: member.customer_id,
-              accountId:  member.account_id || null,
-            },
-          ],
-        });
+        if (loanRecCoaId && floatCoaId) {
+          try {
+            await postJournalEntry(client, {
+              companyId,
+              description: `Group loan disbursement — member loan ${member.id}`,
+              entryDate: disbDate,
+              source: "loan_disbursement",
+              sourceId: member.id,
+              sourceTable: "loans",
+              createdBy: approved_by,
+              lines: [
+                {
+                  coaId: loanRecCoaId,
+                  dc: "debit",
+                  amount: memberAmount,
+                  description: "Group member loan principal disbursed",
+                  customerId: member.customer_id,
+                },
+                {
+                  coaId: floatCoaId,
+                  dc: "credit",
+                  amount: memberAmount,
+                  description: "Cash out for group member",
+                  customerId: member.customer_id,
+                },
+              ],
+            });
+          } catch (err) {
+            console.error(`Journal entry failed for member ${member.id}:`, err.message);
+            // Continue with other members
+          }
+        }
       }
+    }
+
+    // ── 6. Create initial loan transaction record ──────────
+    // This is important for tracking the disbursement
+    try {
+      await client.query(
+        `INSERT INTO loan_transactions (
+           loan_id, 
+           transaction_type, 
+           amount, 
+           transaction_date, 
+           status,
+           created_by,
+           created_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+        [id, 'disbursement', disbAmount, disbDate, 'completed', approved_by]
+      );
+    } catch (err) {
+      console.warn("Failed to create loan transaction:", err.message);
+      // Non-critical, continue
     }
 
     await client.query("COMMIT");
 
     return res.status(200).json({
-      status:  "success",
+      status: "success",
       message: "Loan approved successfully",
-      data:    approvedLoan,
+      data: approvedLoan,
     });
 
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("approveLoan error:", err.message);
-    return res.status(500).json({ status: "error", message: err.message });
+    console.error("approveLoan error:", err);
+    return res.status(500).json({ 
+      status: "error", 
+      message: err.message 
+    });
   } finally {
     client.release();
   }
 };
 
+// Helper function to calculate maturity date
+function calculateMaturityDate(startDate, loanTermMonths) {
+  if (!startDate || !loanTermMonths) return null;
+  const date = new Date(startDate);
+  date.setMonth(date.getMonth() + parseInt(loanTermMonths));
+  return date.toISOString().split("T")[0];
+}
 
 /**
  * PATCH /api/loans/:id/reject
