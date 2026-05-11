@@ -145,11 +145,30 @@ export async function postJournalEntry(client, opts) {
 // payment method.  Returns the code string, not the uuid.
 // ─────────────────────────────────────────────────────────────
 export function cashCoaCode(paymentMethod, user) {
-  console.log(paymentMethod, user);
-  if (paymentMethod === "momo")  return "1010-01"; // MoMo float
-  if (paymentMethod === "bank")  return "1020-01"; // Bank account
-  if(user === 'teller') return "1010-02"
-  return "1010-01";                                // cash cash equivalent (default)
+  const method = paymentMethod?.toLowerCase();
+
+  const isWithdrawalContext = user === "teller";
+
+  // =========================
+  // WITHDRAWAL LOGIC
+  // =========================
+  if (isWithdrawalContext) {
+    if (method === "cash") return "1010-02"; // teller float
+    if (method === "momo") return "1010-01"; // cash vault
+    if (method === "bank") return "1020-01";
+  }
+
+  // =========================
+  // DEPOSIT LOGIC (default)
+  // =========================
+  if (method === "momo") return "1010-03";
+  if (method === "bank") return "1020-01";
+  if (method === "cash") return "1010-01";
+
+  // =========================
+  // FALLBACK
+  // =========================
+  return "1010-01";
 }
 
 // ─────────────────────────────────────────────────────────────
