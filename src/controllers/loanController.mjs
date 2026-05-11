@@ -5,12 +5,6 @@ import { v4 as uuidv4 } from 'uuid';
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const addMonthsFromNow = (n) => {
-  const d = new Date();
-  d.setMonth(d.getMonth() + n);
-  return d.toISOString().split("T")[0];
-}
-
 const calcFixed = (principal, annualRate, months) => {
   const totalInterest = principal * (annualRate / 100);
   const monthly = (principal + totalInterest) / months;
