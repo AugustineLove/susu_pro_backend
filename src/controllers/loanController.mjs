@@ -1,6 +1,6 @@
 import pool from '../db.mjs';
 import { v4 as uuidv4 } from 'uuid';
-import { resolveCOA } from '../services/accountingHelper.mjs';
+import { postJournalEntry, resolveCOA } from '../services/accountingHelper.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -1259,11 +1259,10 @@ export const approveLoan = async (req, res) => {
            type, 
            amount, 
            transaction_date, 
-           status,
            created_by,
            created_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [id, 'disbursement', disbAmount, disbDate, 'completed', approved_by]
+         ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+        [id, 'disbursement', disbAmount, disbDate, approved_by]
       );
     } catch (err) {
       console.warn("Failed to create loan transaction:", err.message);
