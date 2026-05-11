@@ -123,9 +123,10 @@ export const stakeMoney = async (req, res) => {
       txValues
     );
     const tx = txRes.rows[0];
+    const tellerFloatOrCashAccount = transaction_type === 'withdrawal' ? 'teller' : null; 
 
     // ── Resolve COA accounts ──────────────────────────────
-    const cashCode    = cashCoaCode(payment_method, 'teller');
+    const cashCode    = cashCoaCode(payment_method, tellerFloatOrCashAccount);
     const depositCode = depositCoaCode(account.account_type);
 
     const cashCoaId    = await resolveCOA(client, company_id, cashCode);
