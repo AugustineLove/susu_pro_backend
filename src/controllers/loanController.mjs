@@ -498,7 +498,7 @@ export const createP2PLoan = async (req, res) => {
         0,NULL,'none',
         0,$5,
         0,$5,$5,
-        'active',$6,$6,
+        'pending',$6,$6,
         0,$7,$8,$9,
         $10,$11,$12
       ) RETURNING *`,
