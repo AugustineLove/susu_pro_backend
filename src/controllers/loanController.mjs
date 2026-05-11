@@ -602,7 +602,7 @@ export const logRepayment = async (req, res) => {
     const loanRes = await client.query(
       `SELECT id, loantype, outstandingbalance, balance,
               amountpaid, status, loanamount, totalpayable,
-              customer_id, account_id, group_id
+              customer_id, group_id
        FROM loans WHERE id = $1 FOR UPDATE`,
       [id]
     );
@@ -635,7 +635,7 @@ export const logRepayment = async (req, res) => {
     // ── 3. Split payment into principal + interest ────────
     const totalPayable  = parseFloat(loan.totalpayable || loan.loanamount || 0);
     const loanAmount    = parseFloat(loan.loanamount || 0);
-    const totalInterest = Math.max(0, totalPayable - loanAmount);
+    const totalInterest = loan.loantype === "p2p" ? 0 : Math.max(0, totalPayable - loanAmount);
 
     let interestPortion  = 0;
     let principalPortion = actualPayment;
