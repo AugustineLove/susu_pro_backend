@@ -125,7 +125,7 @@ export const stakeMoney = async (req, res) => {
     const tx = txRes.rows[0];
 
     // ── Resolve COA accounts ──────────────────────────────
-    const cashCode    = cashCoaCode(payment_method);
+    const cashCode    = cashCoaCode(payment_method, 'teller');
     const depositCode = depositCoaCode(account.account_type);
 
     const cashCoaId    = await resolveCOA(client, company_id, cashCode);
