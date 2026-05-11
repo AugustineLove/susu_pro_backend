@@ -775,7 +775,7 @@ const tellerFloatRes = await client.query(
     const cashCode = cashCoaCode(
       tx.payment_method, 'teller'
     );
-
+    console.log(`cashcode: ${cashCode}`)
     const depositCode = depositCoaCode(
       account.account_type
     );
