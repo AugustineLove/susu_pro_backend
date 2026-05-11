@@ -145,7 +145,8 @@ export async function postJournalEntry(client, opts) {
 // payment method.  Returns the code string, not the uuid.
 // ─────────────────────────────────────────────────────────────
 export function cashCoaCode(paymentMethod, user) {
-  if (paymentMethod === "momo")  return "1010-03"; // MoMo float
+  console.log(paymentMethod, user);
+  if (paymentMethod === "momo")  return "1010-01"; // MoMo float
   if (paymentMethod === "bank")  return "1020-01"; // Bank account
   if(user === 'teller') return "1010-02"
   return "1010-01";                                // cash cash equivalent (default)
