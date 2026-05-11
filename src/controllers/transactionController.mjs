@@ -356,57 +356,199 @@ export const formatEndDate = (date) => {
 
 export const approveTransaction = async (req, res) => {
   const transactionId = req.params.id;
-  const { teller_id }  = req.body;
+  const { teller_id } = req.body;
 
   const client = await pool.connect();
+
   try {
     await client.query("BEGIN");
 
-    // ── 1. Fetch & validate transaction ──────────────────
+    // =====================================================
+    // 1. FETCH & VALIDATE TRANSACTION
+    // =====================================================
+
     const txRes = await client.query(
-      `SELECT id, account_id, amount, type, status, created_by,
-              payment_method, accounting_je_id
-       FROM transactions WHERE id = $1 FOR UPDATE`,
+      `
+      SELECT
+        id,
+        account_id,
+        amount,
+        type,
+        status,
+        created_by,
+        payment_method,
+        accounting_je_id
+      FROM transactions
+      WHERE id = $1
+      FOR UPDATE
+      `,
       [transactionId]
     );
-    if (txRes.rowCount === 0) throw new Error("Transaction not found");
+
+    if (txRes.rowCount === 0) {
+      throw new Error("Transaction not found");
+    }
 
     const tx = txRes.rows[0];
-    if (tx.type !== "withdrawal" || tx.status !== "pending")
-      throw new Error("Only pending withdrawals can be approved");
+
+    if (
+      tx.type !== "withdrawal" ||
+      tx.status !== "pending"
+    ) {
+      throw new Error(
+        "Only pending withdrawal transactions can be approved"
+      );
+    }
 
     const amount = parseFloat(tx.amount);
 
-    // ── 2. Fetch account + company ────────────────────────
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error("Invalid withdrawal amount");
+    }
+
+    // =====================================================
+    // 2. FETCH ACCOUNT
+    // =====================================================
+
     const accRes = await client.query(
-      `SELECT a.id, a.balance, a.company_id, a.account_type, a.customer_id
-       FROM accounts a WHERE a.id = $1 FOR UPDATE`,
+      `
+      SELECT
+        a.id,
+        a.balance,
+        a.company_id,
+        a.account_type,
+        a.customer_id
+      FROM accounts a
+      WHERE a.id = $1
+      FOR UPDATE
+      `,
       [tx.account_id]
     );
-    if (accRes.rowCount === 0) throw new Error("Associated account not found");
+
+    if (accRes.rowCount === 0) {
+      throw new Error("Associated account not found");
+    }
 
     const account = accRes.rows[0];
-    if (amount > parseFloat(account.balance))
-      throw new Error("Insufficient account balance");
 
-    // ── 3. Deduct from customer savings balance ───────────
-    await client.query(
-      `UPDATE accounts SET balance = balance - $1, last_activity_at = NOW() WHERE id = $2`,
-      [amount, account.id]
+    const currentBalance = parseFloat(
+      account.balance || 0
     );
 
-    // ── 4. Mark transaction approved ─────────────────────
-    await client.query(
-      `UPDATE transactions SET status = 'approved' WHERE id = $1`,
-      [tx.id]
+    if (amount > currentBalance) {
+      throw new Error(
+        "Insufficient customer account balance"
+      );
+    }
+
+    // =====================================================
+    // 3. VERIFY TELLER FLOAT BALANCE
+    // =====================================================
+
+    /**
+     * IMPORTANT:
+     * We ONLY validate teller float here.
+     *
+     * We DO NOT manually deduct float balance,
+     * because the accounting journal entry will
+     * automatically credit/reduce the teller float.
+     */
+
+    const tellerFloatCode = "1010-02";
+
+    const tellerFloatRes = await client.query(
+      `
+      SELECT
+        id,
+        account_name,
+        current_balance
+      FROM chart_of_accounts
+      WHERE company_id = $1
+        AND code = $2
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [account.company_id, tellerFloatCode]
     );
 
-    // ── 5. Float deduction (existing logic — unchanged) ──
-    const today = new Date().toISOString().split("T")[0];
+    if (tellerFloatRes.rowCount === 0) {
+      throw new Error(
+        "Teller float account (1010-02) not found"
+      );
+    }
+
+    const tellerFloat = tellerFloatRes.rows[0];
+
+    const tellerFloatBalance = parseFloat(
+      tellerFloat.current_balance || 0
+    );
+
+    if (tellerFloatBalance < amount) {
+      throw new Error(
+        `Insufficient teller float balance. Available float: GHS ${tellerFloatBalance.toFixed(
+          2
+        )}`
+      );
+    }
+
+    // =====================================================
+    // 4. UPDATE CUSTOMER ACCOUNT BALANCE
+    // =====================================================
+
+    const updatedCustomerBalance =
+      currentBalance - amount;
+
+    await client.query(
+      `
+      UPDATE accounts
+      SET
+        balance = $1,
+        last_activity_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $2
+      `,
+      [updatedCustomerBalance, account.id]
+    );
+
+    // =====================================================
+    // 5. APPROVE TRANSACTION
+    // =====================================================
+
+    const approverId =
+      teller_id || tx.created_by;
+
+    await client.query(
+      `
+      UPDATE transactions
+      SET
+        status = 'approved',
+        approved_by = $1,
+        approved_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $2
+      `,
+      [approverId, tx.id]
+    );
+
+    // =====================================================
+    // 6. FLOAT MOVEMENT TRACKING
+    // =====================================================
+
+    const today = new Date()
+      .toISOString()
+      .split("T")[0];
 
     const budgetRes = await client.query(
-      `SELECT id, allocated, spent FROM budgets
-       WHERE company_id = $1 AND date = $2 ORDER BY id ASC`,
+      `
+      SELECT
+        id,
+        allocated,
+        spent
+      FROM budgets
+      WHERE company_id = $1
+        AND date = $2
+      ORDER BY id ASC
+      `,
       [account.company_id, today]
     );
 
@@ -415,121 +557,287 @@ export const approveTransaction = async (req, res) => {
     if (budgetRes.rowCount > 0) {
       for (const budget of budgetRes.rows) {
         if (remaining <= 0) break;
-        const available = budget.allocated - budget.spent;
-        if (available > 0) {
-          const deducted = Math.min(remaining, available);
-          remaining -= deducted;
-          await client.query(
-            deducted < available
-              ? `UPDATE budgets SET spent = spent + $1 WHERE id = $2`
-              : `UPDATE budgets SET spent = allocated WHERE id = $1`,
-            deducted < available ? [deducted, budget.id] : [budget.id]
-          );
-          await client.query(
-            `INSERT INTO float_movements
-               (budget_id, company_id, source_type, source_id, amount, direction)
-             VALUES ($1,$2,'withdrawal',$3,$4,'debit')`,
-            [budget.id, account.company_id, tx.id, deducted]
-          );
-        }
+
+        const allocated = parseFloat(
+          budget.allocated || 0
+        );
+
+        const spent = parseFloat(
+          budget.spent || 0
+        );
+
+        const available = allocated - spent;
+
+        if (available <= 0) continue;
+
+        const deducted = Math.min(
+          remaining,
+          available
+        );
+
+        remaining -= deducted;
+
+        await client.query(
+          `
+          UPDATE budgets
+          SET
+            spent = spent + $1,
+            updated_at = NOW()
+          WHERE id = $2
+          `,
+          [deducted, budget.id]
+        );
+
+        await client.query(
+          `
+          INSERT INTO float_movements (
+            budget_id,
+            company_id,
+            source_type,
+            source_id,
+            amount,
+            direction,
+            created_at
+          )
+          VALUES (
+            $1,
+            $2,
+            'withdrawal',
+            $3,
+            $4,
+            'debit',
+            NOW()
+          )
+          `,
+          [
+            budget.id,
+            account.company_id,
+            tx.id,
+            deducted,
+          ]
+        );
       }
+
+      // Overflow handling
       if (remaining > 0) {
         await client.query(
-          `UPDATE budgets SET spent = spent + $1 WHERE id = $2`,
-          [remaining, budgetRes.rows[0].id]
+          `
+          UPDATE budgets
+          SET
+            spent = spent + $1,
+            updated_at = NOW()
+          WHERE id = $2
+          `,
+          [
+            remaining,
+            budgetRes.rows[0].id,
+          ]
         );
+
         await client.query(
-          `INSERT INTO float_movements
-             (budget_id, company_id, source_type, source_id, amount, direction)
-           VALUES ($1,$2,'withdrawal',$3,$4,'debit')`,
-          [budgetRes.rows[0].id, account.company_id, tx.id, remaining]
+          `
+          INSERT INTO float_movements (
+            budget_id,
+            company_id,
+            source_type,
+            source_id,
+            amount,
+            direction,
+            created_at
+          )
+          VALUES (
+            $1,
+            $2,
+            'withdrawal',
+            $3,
+            $4,
+            'debit',
+            NOW()
+          )
+          `,
+          [
+            budgetRes.rows[0].id,
+            account.company_id,
+            tx.id,
+            remaining,
+          ]
         );
       }
     } else {
+      // Create fallback budget record
       const newBudget = await client.query(
-        `INSERT INTO budgets (company_id, date, allocated, spent, status)
-         VALUES ($1,$2,0,$3,'Active') RETURNING id`,
-        [account.company_id, today, amount]
+        `
+        INSERT INTO budgets (
+          company_id,
+          date,
+          allocated,
+          spent,
+          status,
+          created_at
+        )
+        VALUES (
+          $1,
+          $2,
+          0,
+          $3,
+          'Active',
+          NOW()
+        )
+        RETURNING id
+        `,
+        [
+          account.company_id,
+          today,
+          amount,
+        ]
       );
+
       await client.query(
-        `INSERT INTO float_movements
-           (budget_id, company_id, source_type, source_id, amount, direction)
-         VALUES ($1,$2,'withdrawal',$3,$4,'debit')`,
-        [newBudget.rows[0].id, account.company_id, tx.id, amount]
+        `
+        INSERT INTO float_movements (
+          budget_id,
+          company_id,
+          source_type,
+          source_id,
+          amount,
+          direction,
+          created_at
+        )
+        VALUES (
+          $1,
+          $2,
+          'withdrawal',
+          $3,
+          $4,
+          'debit',
+          NOW()
+        )
+        `,
+        [
+          newBudget.rows[0].id,
+          account.company_id,
+          tx.id,
+          amount,
+        ]
       );
     }
 
-    // ── 6. Accounting: post the journal entry ─────────────
-    const cashCode    = cashCoaCode(tx.payment_method);
-    const depositCode = depositCoaCode(account.account_type);
-    const cashCoaId    = await resolveCOA(client, account.company_id, cashCode);
-    const depositCoaId = await resolveCOA(client, account.company_id, depositCode);
+    // =====================================================
+    // 7. ACCOUNTING JOURNAL ENTRY
+    // =====================================================
 
-    const entryDate = new Date().toISOString().slice(0, 10);
-    const approverId = teller_id || tx.created_by;
+    const cashCode = cashCoaCode(
+      tx.payment_method
+    );
+
+    const depositCode = depositCoaCode(
+      account.account_type
+    );
+
+    const cashCoaId = await resolveCOA(
+      client,
+      account.company_id,
+      cashCode
+    );
+
+    const depositCoaId = await resolveCOA(
+      client,
+      account.company_id,
+      depositCode
+    );
+
+    const entryDate = new Date()
+      .toISOString()
+      .slice(0, 10);
 
     if (tx.accounting_je_id) {
-      // Draft JE already exists from stakeMoney — just post it
+      // Post existing draft journal entry
       await client.query(
-        `UPDATE journal_entries
-         SET status = 'posted', posted_by = $1, posted_at = NOW()
-         WHERE id = $2 AND status = 'draft'`,
+        `
+        UPDATE journal_entries
+        SET
+          status = 'posted',
+          posted_by = $1,
+          posted_at = NOW(),
+          updated_at = NOW()
+        WHERE id = $2
+          AND status = 'draft'
+        `,
         [approverId, tx.accounting_je_id]
       );
     } else {
-      // No pre-existing draft — create and post fresh
+      // Create and post fresh JE
       await postJournalEntry(client, {
-        companyId:   account.company_id,
-        description: `Withdrawal approved — account ${account.id}`,
+        companyId: account.company_id,
+        description: `Withdrawal approved for account ${account.id}`,
         entryDate,
-        source:      "customer_withdrawal",
-        sourceId:    tx.id,
+        source: "customer_withdrawal",
+        sourceId: tx.id,
         sourceTable: "transactions",
-        createdBy:   approverId,
+        createdBy: approverId,
+
         lines: [
           {
-            coaId:      depositCoaId,
-            dc:         "debit",
+            coaId: depositCoaId,
+            dc: "debit",
             amount,
-            description: "Customer deposit liability reduced on withdrawal",
+            description:
+              "Customer deposit liability reduced on withdrawal",
             customerId: account.customer_id,
-            accountId:  account.id,
-            staffId:    approverId,
+            accountId: account.id,
+            staffId: approverId,
           },
           {
-            coaId:      cashCoaId,
-            dc:         "credit",
+            coaId: cashCoaId,
+            dc: "credit",
             amount,
-            description: "Cash / float paid out",
+            description:
+              "Cash/teller float paid out to customer",
             customerId: account.customer_id,
-            accountId:  account.id,
-            staffId:    approverId,
+            accountId: account.id,
+            staffId: approverId,
           },
         ],
       });
     }
 
+    // =====================================================
+    // 8. COMMIT
+    // =====================================================
+
     await client.query("COMMIT");
 
     return res.status(200).json({
-      status:  "success",
-      message: "Withdrawal approved successfully",
+      status: "success",
+      message:
+        "Withdrawal approved successfully",
       data: {
         transaction_id: tx.id,
-        withdrawn:      amount,
-        newBalance:     parseFloat(account.balance) - amount,
+        withdrawn_amount: amount,
+        previous_balance: currentBalance,
+        new_balance: updatedCustomerBalance,
+        teller_float_available:
+          tellerFloatBalance,
       },
     });
-
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("approveTransaction error:", err.message);
-    return res.status(400).json({ status: "fail", message: err.message });
+
+    console.error(
+      "approveTransaction error:",
+      err.message
+    );
+
+    return res.status(400).json({
+      status: "fail",
+      message:
+        err.message ||
+        "Failed to approve withdrawal",
+    });
   } finally {
     client.release();
   }
 };
-
 
 
 export const rejectTransaction = async (req, res) => {

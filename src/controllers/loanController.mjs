@@ -5,6 +5,12 @@ import { v4 as uuidv4 } from 'uuid';
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const addMonthsFromNow = (n) => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + n);
+  return d.toISOString().split("T")[0];
+}
+
 const calcFixed = (principal, annualRate, months) => {
   const totalInterest = principal * (annualRate / 100);
   const monthly = (principal + totalInterest) / months;
@@ -582,119 +588,258 @@ export const updateP2PStatus = async (req, res) => {
 export const logRepayment = async (req, res) => {
   const { id } = req.params;
   const { amount_paid, payment_date, note, company_id, created_by } = req.body;
-  console.log(amount_paid)
-  if (!amount_paid || parseFloat(amount_paid) <= 0) {
-    return res.status(400).json({ status: 'fail', message: 'amount_paid must be a positive number' });
-  }
-  if (!company_id) return res.status(400).json({ status: 'fail', message: 'company_id is required' });
-  if (!created_by) return res.status(400).json({ status: 'fail', message: 'created_by is required' });
+
+  if (!amount_paid || parseFloat(amount_paid) <= 0)
+    return res.status(400).json({ status: "fail", message: "amount_paid must be a positive number" });
+  if (!company_id)
+    return res.status(400).json({ status: "fail", message: "company_id is required" });
+  if (!created_by)
+    return res.status(400).json({ status: "fail", message: "created_by is required" });
 
   const payment = parseFloat(amount_paid);
-  const payDate = payment_date || new Date().toISOString().split('T')[0];
+  const payDate = payment_date || new Date().toISOString().split("T")[0];
 
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // Lock the loan row
+    // ── 1. Lock the loan ─────────────────────────────────
     const loanRes = await client.query(
-      `SELECT id, loantype, outstandingbalance, balance, amountpaid, status, loanamount, totalpayable
+      `SELECT id, loantype, outstandingbalance, balance,
+              amountpaid, status, loanamount, totalpayable,
+              customer_id, account_id, group_id
        FROM loans WHERE id = $1 FOR UPDATE`,
       [id]
     );
 
     if (!loanRes.rows.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ status: 'fail', message: 'Loan not found' });
+      await client.query("ROLLBACK");
+      return res.status(404).json({ status: "fail", message: "Loan not found" });
     }
 
     const loan = loanRes.rows[0];
 
-    if (['completed', 'ended'].includes(loan.status)) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ status: 'fail', message: 'Loan is already fully repaid' });
+    if (["completed", "ended"].includes(loan.status)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ status: "fail", message: "Loan is already fully repaid" });
     }
 
+    // ── 2. Calculate new balances ─────────────────────────
     const currentBalance = parseFloat(loan.outstandingbalance);
-    const actualPayment  = Math.min(payment, currentBalance); // can't overpay
+    const actualPayment  = Math.min(payment, currentBalance);
     const newBalance     = parseFloat((currentBalance - actualPayment).toFixed(2));
     const newAmountPaid  = parseFloat((parseFloat(loan.amountpaid) + actualPayment).toFixed(2));
 
-    // Determine new status
     let newStatus = loan.status;
     if (newBalance <= 0) {
-      newStatus = loan.loantype === 'p2p' ? 'ended' : 'completed';
+      newStatus = loan.loantype === "p2p" ? "ended" : "completed";
     }
 
-    // Update next_payment_date (only for active regular loans)
     const nextPaymentDate = newBalance > 0 ? addMonthsFromNow(1) : null;
 
-    // Update the loan
+    // ── 3. Split payment into principal + interest ────────
+    const totalPayable  = parseFloat(loan.totalpayable || loan.loanamount || 0);
+    const loanAmount    = parseFloat(loan.loanamount || 0);
+    const totalInterest = Math.max(0, totalPayable - loanAmount);
+
+    let interestPortion  = 0;
+    let principalPortion = actualPayment;
+
+    if (totalPayable > 0 && totalInterest > 0) {
+      // What fraction of each payment is interest?
+      const interestShare  = totalInterest / totalPayable;
+      interestPortion  = parseFloat((actualPayment * interestShare).toFixed(2));
+      principalPortion = parseFloat((actualPayment - interestPortion).toFixed(2));
+    }
+
+    // ── 4. Update loan record ─────────────────────────────
     await client.query(
       `UPDATE loans SET
-        amountpaid = $1,
-        outstandingbalance = $2,
-        balance = $2,
-        status = $3,
-        nextpaymentdate = $4,
-        updated_at = NOW()
+         amountpaid         = $1,
+         outstandingbalance = $2,
+         balance            = $2,
+         status             = $3,
+         nextpaymentdate    = $4,
+         updated_at         = NOW()
        WHERE id = $5`,
       [newAmountPaid, newBalance, newStatus, nextPaymentDate, id]
     );
 
-    // Log in repayments table
+    // ── 5. Log in repayments table ────────────────────────
     const repaymentId = uuidv4();
     await client.query(
       `INSERT INTO loan_repayments (
-        id, loan_id, amount, payment_date, note,
-        balance_after, company_id, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [repaymentId, id, parseFloat(actualPayment.toFixed(2)), payDate, note || null, newBalance, company_id, created_by]
+         id, loan_id, amount, payment_date, note,
+         balance_after, company_id, created_by
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        repaymentId, id,
+        parseFloat(actualPayment.toFixed(2)),
+        payDate, note || null,
+        newBalance, company_id, created_by,
+      ]
     );
 
-    // If group member loan — update parent group loan totals
-    if (loan.loantype === 'group_member') {
+    // ── 6. Resolve COA accounts ───────────────────────────
+    const floatCoaId       = await resolveCOA(client, company_id, "1010-01"); // Cash in
+    const loanRecCoaId     = await resolveCOA(client, company_id, "1030-01"); // Principal receivable
+    const loanIntIncCoaId  = await resolveCOA(client, company_id, "4010-01"); // Loan interest income
+
+    // ── 7. Post journal entry ─────────────────────────────
+    if (interestPortion > 0) {
+      // ── Split entry: principal + interest ────────────
+      //   Dr  Float             (full payment)
+      //   Cr  Loan Receivable   (principal only)
+      //   Cr  Interest Income   (interest only)
+      //
+      // Three lines, still balanced:
+      //   Debit total  = actualPayment
+      //   Credit total = principalPortion + interestPortion = actualPayment ✓
+
+      const refRes = await client.query(
+        "SELECT generate_journal_ref($1) AS ref", [company_id]
+      );
+      const ref = refRes.rows[0].ref;
+
+      const periodRes = await client.query(
+        `SELECT id FROM accounting_periods
+         WHERE company_id = $1 AND status = 'open'
+           AND start_date <= $2 AND end_date >= $2 LIMIT 1`,
+        [company_id, payDate]
+      );
+      const periodId = periodRes.rows[0]?.id || null;
+
+      // Insert header (draft)
+      const jeRes = await client.query(
+        `INSERT INTO journal_entries
+           (company_id, reference_no, description, entry_date,
+            source, source_id, source_table, period_id, status, created_by)
+         VALUES ($1,$2,$3,$4,'loan_repayment',$5,'loan_repayments',$6,'draft',$7)
+         RETURNING id`,
+        [
+          company_id, ref,
+          `Loan repayment — principal GH₵${principalPortion} + interest GH₵${interestPortion}`,
+          payDate, repaymentId, periodId, created_by,
+        ]
+      );
+      const jeId = jeRes.rows[0].id;
+
+      // Debit line — cash received (full amount)
+      await client.query(
+        `INSERT INTO journal_entry_lines
+           (journal_entry_id, coa_id, debit_credit, amount, description, customer_id, account_id)
+         VALUES ($1,$2,'debit',$3,'Cash received from borrower',$4,$5)`,
+        [jeId, floatCoaId, actualPayment, loan.customer_id, loan.account_id || null]
+      );
+
+      // Credit line 1 — reduce loan receivable (principal)
+      await client.query(
+        `INSERT INTO journal_entry_lines
+           (journal_entry_id, coa_id, debit_credit, amount, description, customer_id, account_id)
+         VALUES ($1,$2,'credit',$3,'Loan principal repaid',$4,$5)`,
+        [jeId, loanRecCoaId, principalPortion, loan.customer_id, loan.account_id || null]
+      );
+
+      // Credit line 2 — interest income
+      await client.query(
+        `INSERT INTO journal_entry_lines
+           (journal_entry_id, coa_id, debit_credit, amount, description, customer_id, account_id)
+         VALUES ($1,$2,'credit',$3,'Interest income on loan repayment',$4,$5)`,
+        [jeId, loanIntIncCoaId, interestPortion, loan.customer_id, loan.account_id || null]
+      );
+
+      // Post — triggers balance check
+      await client.query(
+        `UPDATE journal_entries
+         SET status = 'posted', posted_by = $1, posted_at = NOW()
+         WHERE id = $2`,
+        [created_by, jeId]
+      );
+
+    } else {
+      // ── No interest: simple two-line entry ───────────
+      //   Dr  Float             (payment)
+      //   Cr  Loan Receivable   (payment)
+      await postJournalEntry(client, {
+        companyId:   company_id,
+        description: `Loan repayment — full principal`,
+        entryDate:   payDate,
+        source:      "loan_repayment",
+        sourceId:    repaymentId,
+        sourceTable: "loan_repayments",
+        createdBy:   created_by,
+        lines: [
+          {
+            coaId:      floatCoaId,
+            dc:         "debit",
+            amount:     actualPayment,
+            description: "Cash received from borrower",
+            customerId: loan.customer_id,
+            accountId:  loan.account_id || null,
+          },
+          {
+            coaId:      loanRecCoaId,
+            dc:         "credit",
+            amount:     actualPayment,
+            description: "Loan principal repaid",
+            customerId: loan.customer_id,
+            accountId:  loan.account_id || null,
+          },
+        ],
+      });
+    }
+
+    // ── 8. Group member: update parent loan totals ────────
+    if (loan.loantype === "group_member") {
       await client.query(
         `UPDATE loans SET
-          amountpaid = (
-            SELECT COALESCE(SUM(amountpaid), 0)
-            FROM loans
-            WHERE group_id = (SELECT group_id FROM loans WHERE id = $1) AND loantype = 'group_member'
-          ),
-          outstandingbalance = (
-            SELECT COALESCE(SUM(outstandingbalance), 0)
-            FROM loans
-            WHERE group_id = (SELECT group_id FROM loans WHERE id = $1) AND loantype = 'group_member'
-          ),
-          balance = (
-            SELECT COALESCE(SUM(balance), 0)
-            FROM loans
-            WHERE group_id = (SELECT group_id FROM loans WHERE id = $1) AND loantype = 'group_member'
-          ),
-          updated_at = NOW()
-        WHERE id = (SELECT group_id FROM loans WHERE id = $1) AND loantype = 'group'`,
+           amountpaid = (
+             SELECT COALESCE(SUM(amountpaid), 0)
+             FROM loans
+             WHERE group_id = (SELECT group_id FROM loans WHERE id = $1)
+               AND loantype = 'group_member'
+           ),
+           outstandingbalance = (
+             SELECT COALESCE(SUM(outstandingbalance), 0)
+             FROM loans
+             WHERE group_id = (SELECT group_id FROM loans WHERE id = $1)
+               AND loantype = 'group_member'
+           ),
+           balance = (
+             SELECT COALESCE(SUM(balance), 0)
+             FROM loans
+             WHERE group_id = (SELECT group_id FROM loans WHERE id = $1)
+               AND loantype = 'group_member'
+           ),
+           updated_at = NOW()
+         WHERE id = (SELECT group_id FROM loans WHERE id = $1)
+           AND loantype = 'group'`,
         [id]
       );
     }
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
+
     return res.status(200).json({
-      status: 'success',
-      message: 'Repayment logged successfully',
+      status:  "success",
+      message: "Repayment logged successfully",
       data: {
-        loan_id: id,
-        amount_paid: parseFloat(actualPayment.toFixed(2)),
-        new_balance: newBalance,
-        total_paid: newAmountPaid,
-        new_status: newStatus,
-        payment_date: payDate,
-        repayment_id: repaymentId,
+        loan_id:          id,
+        amount_paid:      parseFloat(actualPayment.toFixed(2)),
+        principal_portion: principalPortion,
+        interest_portion:  interestPortion,
+        new_balance:      newBalance,
+        total_paid:       newAmountPaid,
+        new_status:       newStatus,
+        payment_date:     payDate,
+        repayment_id:     repaymentId,
       },
     });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('logRepayment error:', error.message);
-    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("logRepayment error:", err.message);
+    return res.status(500).json({ status: "error", message: err.message });
   } finally {
     client.release();
   }
@@ -914,71 +1059,170 @@ export const approveLoan = async (req, res) => {
   const { id } = req.params;
   const { approved_by, approved_by_type, disbursement_date } = req.body;
 
-  if (!approved_by || !approved_by_type) {
-    return res.status(400).json({ status: 'fail', message: 'approved_by and approved_by_type are required' });
-  }
+  if (!approved_by || !approved_by_type)
+    return res.status(400).json({
+      status:  "fail",
+      message: "approved_by and approved_by_type are required",
+    });
 
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
+    // ── 1. Fetch & validate the loan ─────────────────────
     const loanRes = await client.query(
-      `SELECT id, loantype, status, loanterm, request_date FROM loans WHERE id = $1 FOR UPDATE`,
+      `SELECT
+         l.id, l.loantype, l.status, l.loanterm,
+         l.request_date, l.loanamount, l.totalpayable,
+         l.customer_id, l.company_id,
+         l.account_id,          -- the loan savings account (if linked)
+         l.group_id
+       FROM loans l WHERE l.id = $1 FOR UPDATE`,
       [id]
     );
 
     if (!loanRes.rows.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ status: 'fail', message: 'Loan not found' });
+      await client.query("ROLLBACK");
+      return res.status(404).json({ status: "fail", message: "Loan not found" });
     }
 
     const loan = loanRes.rows[0];
 
-    if (loan.status !== 'pending') {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ status: 'fail', message: `Loan is already '${loan.status}' and cannot be approved` });
+    if (loan.status !== "pending") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        status:  "fail",
+        message: `Loan is already '${loan.status}' and cannot be approved`,
+      });
     }
 
-    const disbDate = disbursement_date || new Date().toISOString().split('T')[0];
+    const disbDate  = disbursement_date || new Date().toISOString().split("T")[0];
+    const companyId = loan.company_id;
 
+    // ── 2. Resolve COA accounts ───────────────────────────
+    const loanRecCoaId = await resolveCOA(client, companyId, "1030-01"); // Loan Receivable
+    const floatCoaId   = await resolveCOA(client, companyId, "1010-01"); // MB Float
+
+    // ── 3. Approve the loan row ───────────────────────────
     const result = await client.query(
       `UPDATE loans SET
-        status = 'active',
-        disbursementdate = $1,
-        approved_by = $2,
-        approved_by_type = $3,
-        approved_at = NOW(),
-        updated_at = NOW()
+         status           = 'active',
+         disbursementdate = $1,
+         approved_by      = $2,
+         approved_by_type = $3,
+         approved_at      = NOW(),
+         updated_at       = NOW()
        WHERE id = $4
        RETURNING *`,
       [disbDate, approved_by, approved_by_type, id]
     );
 
-    // If parent group loan, approve all member loans too
-    if (loan.loantype === 'group') {
+    const approvedLoan = result.rows[0];
+    const disbAmount   = parseFloat(approvedLoan.loanamount || 0);
+
+    // ── 4. Journal entry for this loan ───────────────────
+    // Only post a JE if there's a real disbursement amount.
+    // Group parent loans have amount = sum of members — we post
+    // member-level JEs below instead to avoid double-counting.
+    if (loan.loantype !== "group" && disbAmount > 0) {
+      await postJournalEntry(client, {
+        companyId,
+        description: `Loan disbursement — loan ${id}`,
+        entryDate:   disbDate,
+        source:      "loan_disbursement",
+        sourceId:    id,
+        sourceTable: "loans",
+        createdBy:   approved_by,
+        lines: [
+          {
+            coaId:      loanRecCoaId,
+            dc:         "debit",
+            amount:     disbAmount,
+            description: "Loan principal disbursed — now receivable",
+            customerId: loan.customer_id,
+            accountId:  loan.account_id || null,
+          },
+          {
+            coaId:      floatCoaId,
+            dc:         "credit",
+            amount:     disbAmount,
+            description: "Cash paid out from mobile banker float",
+            customerId: loan.customer_id,
+            accountId:  loan.account_id || null,
+          },
+        ],
+      });
+    }
+
+    // ── 5. Group loan: approve all members + post per-member JEs ─
+    if (loan.loantype === "group") {
+      // Approve member loans
       await client.query(
         `UPDATE loans SET
-          status = 'active',
-          disbursementdate = $1,
-          approved_by = $2,
-          approved_by_type = $3,
-          approved_at = NOW(),
-          updated_at = NOW()
+           status           = 'active',
+           disbursementdate = $1,
+           approved_by      = $2,
+           approved_by_type = $3,
+           approved_at      = NOW(),
+           updated_at       = NOW()
          WHERE group_id = $4 AND loantype = 'group_member'`,
         [disbDate, approved_by, approved_by_type, id]
       );
+
+      // Fetch member loans to post individual JEs
+      const memberRes = await client.query(
+        `SELECT id, loanamount, customer_id, account_id, company_id
+         FROM loans
+         WHERE group_id = $1 AND loantype = 'group_member'`,
+        [id]
+      );
+
+      for (const member of memberRes.rows) {
+        const memberAmount = parseFloat(member.loanamount || 0);
+        if (memberAmount <= 0) continue;
+
+        await postJournalEntry(client, {
+          companyId,
+          description: `Group loan disbursement — member loan ${member.id}`,
+          entryDate:   disbDate,
+          source:      "loan_disbursement",
+          sourceId:    member.id,
+          sourceTable: "loans",
+          createdBy:   approved_by,
+          lines: [
+            {
+              coaId:      loanRecCoaId,
+              dc:         "debit",
+              amount:     memberAmount,
+              description: "Group member loan principal disbursed",
+              customerId: member.customer_id,
+              accountId:  member.account_id || null,
+            },
+            {
+              coaId:      floatCoaId,
+              dc:         "credit",
+              amount:     memberAmount,
+              description: "Cash out for group member",
+              customerId: member.customer_id,
+              accountId:  member.account_id || null,
+            },
+          ],
+        });
+      }
     }
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
+
     return res.status(200).json({
-      status: 'success',
-      message: 'Loan approved successfully',
-      data: result.rows[0],
+      status:  "success",
+      message: "Loan approved successfully",
+      data:    approvedLoan,
     });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('approveLoan error:', error.message);
-    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("approveLoan error:", err.message);
+    return res.status(500).json({ status: "error", message: err.message });
   } finally {
     client.release();
   }
