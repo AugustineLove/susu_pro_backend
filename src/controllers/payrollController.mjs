@@ -223,7 +223,7 @@ export const upsertSalaryProfile = async (req, res) => {
   const {
     grade_id, basic_salary, use_grade_salary, payment_method,
     is_tax_exempt, tax_relief, ssnit_exempt, effective_from,
-    created_by,
+    created_by, salary_account_number,
     // staff fields to update too
     tin_number, ssnit_number, bank_name, bank_branch,
     bank_account_name, bank_account_number, hire_date,
@@ -247,11 +247,12 @@ export const upsertSalaryProfile = async (req, res) => {
          employment_type = COALESCE($8, employment_type),
          department = COALESCE($9, department),
          job_title = COALESCE($10, job_title),
+         salary_account_number = COALESCE($11, salary_account_number),
          updated_at = NOW()
-       WHERE id = $11 AND company_id = $12`,
+       WHERE id = $12 AND company_id = $13`,
       [tin_number, ssnit_number, bank_name, bank_branch,
        bank_account_name, bank_account_number, hire_date,
-       employment_type, department, job_title, staffId, companyId]
+       employment_type, department, job_title, salary_account_number, staffId, companyId]
     );
 
     // Upsert salary profile
