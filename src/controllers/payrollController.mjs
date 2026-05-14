@@ -920,14 +920,12 @@ export const approvePayroll = async (req, res) => {
 // ============================================================
 // ── MARK PAYROLL AS PAID ─────────────────────────────────────
 // ============================================================
-// When salaries are actually disbursed to bank accounts:
-//   Dr  Salaries Payable (2040)   total_net  ← liability cleared
-//   Cr  Bank Account    (1020-01) total_net  ← cash goes out
 
 export const markPayrollPaid = async (req, res) => {
   const { companyId, periodId } = req.params;
   const { paid_by, payment_date } = req.body;
 
+  console.log(periodId);
   const client = await pool.connect();
 
   try {
@@ -957,7 +955,7 @@ export const markPayrollPaid = async (req, res) => {
     const salPayableId = await resolveCOA(client, companyId, "2040");
     const customerDepositCoaId = await resolveCOA(client, companyId, "2010-01");
 
-    // 3️⃣ Fetch payroll entries with staff + accounts
+    console.log(`${salPayableId}, ${customerDepositCoaId}`);
     const payrollRes = await client.query(
       `
       SELECT
@@ -988,7 +986,7 @@ export const markPayrollPaid = async (req, res) => {
 
     let successCount = 0;
     let failedCount = 0;
-
+    console.log(`Entries: ${entries}`)
     // 4️⃣ Process each staff payment
     for (const emp of entries) {
       const savepoint = `sp_${emp.id}`;
