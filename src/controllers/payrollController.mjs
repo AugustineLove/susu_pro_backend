@@ -1054,7 +1054,8 @@ export const markPayrollPaid = async (req, res) => {
         console.log(`Transaction id: ${transactionId}`)
 
         // 7️⃣ Accounting entry (DOUBLE ENTRY)
-        await postJournalEntry(client, {
+       try {
+         await postJournalEntry(client, {
           companyId,
           description: `Salary payment - ${emp.full_name}`,
           entryDate: payDate,
@@ -1081,6 +1082,10 @@ export const markPayrollPaid = async (req, res) => {
             },
           ],
         });
+       } catch (e) {
+         console.error("JE ERROR:", e);
+         throw e;
+       }
 
         // 8️⃣ Update payroll entry
         const reference = `SAL-${periodId}-${emp.staff_id.slice(0, 8)}`;
@@ -1120,6 +1125,7 @@ export const markPayrollPaid = async (req, res) => {
         successCount++;
         console.log(`Sucess count: ${successCount}`)
       } catch (err) {
+        console.error("Payroll payment error:", err);
         await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
 
         await client.query(
