@@ -998,7 +998,6 @@ export const markPayrollPaid = async (req, res) => {
 
     let successCount = 0;
     let failedCount = 0;
-    console.log(`Entries: ${JSON.stringify(entries)}`)
     // 4️⃣ Process each staff payment
     for (const emp of entries) {
       const savepoint = `sp_${String(emp.id).replace(/-/g, "_")}`;
@@ -1007,7 +1006,7 @@ export const markPayrollPaid = async (req, res) => {
         await client.query(`SAVEPOINT ${savepoint}`);
 
         const net = parseFloat(emp.net_salary);
-
+        console.log(`Net: ${net}`)
         // Validate account
         if (!emp.account_id || emp.account_status !== "Active") {
           throw new Error("Invalid or inactive staff account");
@@ -1051,6 +1050,7 @@ export const markPayrollPaid = async (req, res) => {
         );
 
         const transactionId = txRes.rows[0].id;
+        console.log(`Transaction id: ${transactionId}`)
 
         // 7️⃣ Accounting entry (DOUBLE ENTRY)
         await postJournalEntry(client, {
@@ -1083,7 +1083,7 @@ export const markPayrollPaid = async (req, res) => {
 
         // 8️⃣ Update payroll entry
         const reference = `SAL-${periodId}-${emp.staff_id.slice(0, 8)}`;
-
+        console.log(`Reference: ${reference}`)
         await client.query(
           `
           UPDATE payroll_entries
@@ -1117,6 +1117,7 @@ export const markPayrollPaid = async (req, res) => {
         await client.query(`RELEASE SAVEPOINT ${savepoint}`);
 
         successCount++;
+        console.log(`Sucess count: ${successCount}`)
       } catch (err) {
         await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
 
