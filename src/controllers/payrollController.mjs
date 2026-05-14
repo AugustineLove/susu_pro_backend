@@ -968,7 +968,6 @@ export const markPayrollPaid = async (req, res) => {
     const salPayableId = await resolveCOA(client, companyId, "2040");
     const customerDepositCoaId = await resolveCOA(client, companyId, "2010-01");
 
-    console.log(`${salPayableId}, ${customerDepositCoaId}`);
     const payrollRes = await client.query(
       `
       SELECT
@@ -999,10 +998,10 @@ export const markPayrollPaid = async (req, res) => {
 
     let successCount = 0;
     let failedCount = 0;
-    console.log(`Entries: ${entries}`)
+    console.log(`Entries: ${JSON.stringify(entries)}`)
     // 4️⃣ Process each staff payment
     for (const emp of entries) {
-      const savepoint = `sp_${emp.id}`;
+      const savepoint = `sp_${String(emp.id).replace(/-/g, "_")}`;
 
       try {
         await client.query(`SAVEPOINT ${savepoint}`);
@@ -1037,7 +1036,7 @@ export const markPayrollPaid = async (req, res) => {
             staff_id,
             transaction_date
           )
-          VALUES ($1,'salary','completed',$2,$3,$4,$5,$6,$7)
+          VALUES ($1,$2,'salary','completed',$3,$4,$5,$6,$7)
           RETURNING id
           `,
           [
