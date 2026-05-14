@@ -254,32 +254,45 @@ export const upsertSalaryProfile = async (req, res) => {
        bank_account_name, bank_account_number, hire_date,
        employment_type, department, job_title, salary_account_number, staffId, companyId]
     );
+    console.log("salary_account_number:", salary_account_number);
 
     // Upsert salary profile
     const r = await client.query(
-      `INSERT INTO staff_salary_profiles
-         (staff_id, company_id, grade_id, basic_salary, use_grade_salary,
-          payment_method, is_tax_exempt, tax_relief, ssnit_exempt,
-          effective_from, created_by, salary_account_number)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-       ON CONFLICT (staff_id) DO UPDATE SET
-         grade_id        = EXCLUDED.grade_id,
-         basic_salary    = EXCLUDED.basic_salary,
-         use_grade_salary = EXCLUDED.use_grade_salary,
-         payment_method  = EXCLUDED.payment_method,
-         is_tax_exempt   = EXCLUDED.is_tax_exempt,
-         tax_relief      = EXCLUDED.tax_relief,
-         ssnit_exempt    = EXCLUDED.ssnit_exempt,
-         effective_from  = EXCLUDED.effective_from,
-         salary_account_number = EXCLUDED.salary_account_number,
-         updated_at      = NOW()
-       RETURNING *`,
-      [staffId, companyId, grade_id || null, basic_salary || 0,
-       use_grade_salary || false, payment_method || "bank",
-       is_tax_exempt || false, tax_relief || 0,
-       ssnit_exempt || false, effective_from || new Date().toISOString().slice(0,10),
-       created_by, salary_account_number]
-    );
+  `INSERT INTO staff_salary_profiles
+     (staff_id, company_id, grade_id, basic_salary, use_grade_salary,
+      payment_method, is_tax_exempt, tax_relief, ssnit_exempt,
+      effective_from, created_by, salary_account_number)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+   ON CONFLICT (staff_id) DO UPDATE SET
+     grade_id        = EXCLUDED.grade_id,
+     basic_salary    = EXCLUDED.basic_salary,
+     use_grade_salary = EXCLUDED.use_grade_salary,
+     payment_method  = EXCLUDED.payment_method,
+     is_tax_exempt   = EXCLUDED.is_tax_exempt,
+     tax_relief      = EXCLUDED.tax_relief,
+     ssnit_exempt    = EXCLUDED.ssnit_exempt,
+     effective_from  = EXCLUDED.effective_from,
+     salary_account_number = COALESCE(
+       EXCLUDED.salary_account_number,
+       staff_salary_profiles.salary_account_number
+     ),
+     updated_at      = NOW()
+   RETURNING *`,
+  [
+    staffId,
+    companyId,
+    grade_id || null,
+    basic_salary || 0,
+    use_grade_salary || false,
+    payment_method || "bank",
+    is_tax_exempt || false,
+    tax_relief || 0,
+    ssnit_exempt || false,
+    effective_from || new Date().toISOString().slice(0,10),
+    created_by,
+    salary_account_number || null
+  ]
+);
 
     await client.query("COMMIT");
     return res.status(200).json({ status: "success", data: r.rows[0] });
