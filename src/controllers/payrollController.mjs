@@ -201,7 +201,7 @@ export const getSalaryProfile = async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT sp.*,
-              sg.name AS grade_name, sg.basic_salary AS grade_salary,
+              sg.name AS grade_name, sg.basic_salary AS grade_salary, sg.salary_account_number,
               s.full_name, s.role, s.department, s.job_title,
               s.bank_name, s.bank_account_number, s.bank_account_name,
               s.tin_number, s.ssnit_number, s.hire_date, s.employment_type
@@ -260,8 +260,8 @@ export const upsertSalaryProfile = async (req, res) => {
       `INSERT INTO staff_salary_profiles
          (staff_id, company_id, grade_id, basic_salary, use_grade_salary,
           payment_method, is_tax_exempt, tax_relief, ssnit_exempt,
-          effective_from, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          effective_from, created_by, salary_account_number)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (staff_id) DO UPDATE SET
          grade_id        = EXCLUDED.grade_id,
          basic_salary    = EXCLUDED.basic_salary,
@@ -271,13 +271,14 @@ export const upsertSalaryProfile = async (req, res) => {
          tax_relief      = EXCLUDED.tax_relief,
          ssnit_exempt    = EXCLUDED.ssnit_exempt,
          effective_from  = EXCLUDED.effective_from,
+         salary_account_number = EXCLUDED.salary_account_number,
          updated_at      = NOW()
        RETURNING *`,
       [staffId, companyId, grade_id || null, basic_salary || 0,
        use_grade_salary || false, payment_method || "bank",
        is_tax_exempt || false, tax_relief || 0,
        ssnit_exempt || false, effective_from || new Date().toISOString().slice(0,10),
-       created_by]
+       created_by, salary_account_number]
     );
 
     await client.query("COMMIT");
