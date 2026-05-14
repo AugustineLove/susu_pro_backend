@@ -929,57 +929,245 @@ export const markPayrollPaid = async (req, res) => {
   const { paid_by, payment_date } = req.body;
 
   const client = await pool.connect();
+
   try {
     await client.query("BEGIN");
 
+    // 1️⃣ Lock payroll period
     const periodRes = await client.query(
-      `SELECT * FROM payroll_periods WHERE id = $1 AND company_id = $2 FOR UPDATE`,
+      `SELECT * FROM payroll_periods
+       WHERE id = $1 AND company_id = $2
+       FOR UPDATE`,
       [periodId, companyId]
     );
-    if (!periodRes.rows.length) throw new Error("Period not found");
+
+    if (!periodRes.rowCount) throw new Error("Period not found");
 
     const period = periodRes.rows[0];
-    if (period.status !== "approved") throw new Error("Only approved payrolls can be marked paid");
 
-    const net          = parseFloat(period.total_net);
+    if (period.status !== "approved")
+      throw new Error("Only approved payrolls can be marked as paid");
+
+    const payDate =
+      payment_date ||
+      period.payment_date ||
+      new Date().toISOString().slice(0, 10);
+
+    // 2️⃣ Resolve COAs once
     const salPayableId = await resolveCOA(client, companyId, "2040");
-    const bankCoaId    = await resolveCOA(client, companyId, "1020-01");
-    const payDate      = payment_date || period.payment_date || new Date().toISOString().slice(0,10);
+    const customerDepositCoaId = await resolveCOA(client, companyId, "2010-01");
 
-    await postJournalEntry(client, {
-      companyId,
-      description: `Salary payment disbursed — ${period.name}`,
-      entryDate:   payDate,
-      source:      "expense",
-      sourceId:    periodId,
-      sourceTable: "payroll_periods",
-      createdBy:   paid_by,
-      lines: [
-        { coaId: salPayableId, dc: "debit",  amount: net, description: "Salaries payable cleared" },
-        { coaId: bankCoaId,    dc: "credit", amount: net, description: "Bank payment to staff" },
-      ],
-    });
-
-    await client.query(
-      `UPDATE payroll_periods SET status='paid', paid_by=$1, paid_at=NOW(), updated_at=NOW() WHERE id=$2`,
-      [paid_by, periodId]
+    // 3️⃣ Fetch payroll entries with staff + accounts
+    const payrollRes = await client.query(
+      `
+      SELECT
+        pe.*,
+        s.full_name,
+        s.phone,
+        sp.salary_account_number,
+        a.id AS account_id,
+        a.balance,
+        a.status AS account_status,
+        c.id AS customer_id
+      FROM payroll_entries pe
+      JOIN staff s ON s.id = pe.staff_id
+      JOIN staff_salary_profiles sp ON sp.staff_id = s.id
+      JOIN accounts a ON a.account_number = sp.salary_account_number
+      JOIN customers c ON c.id = a.customer_id
+      WHERE pe.payroll_period_id = $1
+        AND pe.company_id = $2
+      FOR UPDATE
+      `,
+      [periodId, companyId]
     );
+
+    if (!payrollRes.rowCount)
+      throw new Error("No payroll entries found");
+
+    const entries = payrollRes.rows;
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    // 4️⃣ Process each staff payment
+    for (const emp of entries) {
+      const savepoint = `sp_${emp.id}`;
+
+      try {
+        await client.query(`SAVEPOINT ${savepoint}`);
+
+        const net = parseFloat(emp.net_salary);
+
+        // Validate account
+        if (!emp.account_id || emp.account_status !== "Active") {
+          throw new Error("Invalid or inactive staff account");
+        }
+
+        // 5️⃣ Credit staff account (internal deposit)
+        await client.query(
+          `UPDATE accounts
+           SET balance = balance + $1,
+               last_activity_at = NOW()
+           WHERE id = $2`,
+          [net, emp.account_id]
+        );
+
+        // 6️⃣ Insert transaction (salary)
+        const txRes = await client.query(
+          `
+          INSERT INTO transactions (
+            account_id,
+            amount,
+            type,
+            status,
+            company_id,
+            description,
+            created_by,
+            staff_id,
+            transaction_date
+          )
+          VALUES ($1,'salary','completed',$2,$3,$4,$5,$6,$7)
+          RETURNING id
+          `,
+          [
+            emp.account_id,
+            net,
+            companyId,
+            `Salary payment - ${emp.full_name}`,
+            paid_by,
+            emp.staff_id,
+            payDate,
+          ]
+        );
+
+        const transactionId = txRes.rows[0].id;
+
+        // 7️⃣ Accounting entry (DOUBLE ENTRY)
+        await postJournalEntry(client, {
+          companyId,
+          description: `Salary payment - ${emp.full_name}`,
+          entryDate: payDate,
+          source: "salary_payment",
+          sourceId: transactionId,
+          sourceTable: "transactions",
+          createdBy: paid_by,
+          lines: [
+            {
+              coaId: salPayableId,
+              dc: "debit",
+              amount: net,
+              description: "Salaries payable cleared",
+              staffId: emp.staff_id,
+              accountId: emp.account_id,
+            },
+            {
+              coaId: customerDepositCoaId,
+              dc: "credit",
+              amount: net,
+              description: "Salary credited to staff account",
+              staffId: emp.staff_id,
+              accountId: emp.account_id,
+            },
+          ],
+        });
+
+        // 8️⃣ Update payroll entry
+        const reference = `SAL-${periodId}-${emp.staff_id.slice(0, 8)}`;
+
+        await client.query(
+          `
+          UPDATE payroll_entries
+          SET
+            payment_status = 'paid',
+            payment_reference = $1,
+            paid_at = NOW(),
+            transaction_id = $2,
+            payment_error = NULL
+          WHERE id = $3
+          `,
+          [reference, transactionId, emp.id]
+        );
+
+        // 9️⃣ SMS (non-blocking)
+        if (emp.phone) {
+          const message =
+            `Salary Alert\n` +
+            `Dear ${emp.full_name}, your salary of GHS ${net.toFixed(2)} ` +
+            `has been credited successfully.\nRef: ${reference}`;
+
+          sendCustomerMessageBackend(
+            emp.phone,
+            "Payroll System",
+            message
+          ).catch((err) =>
+            console.warn("SMS failed:", err.message)
+          );
+        }
+
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+
+        successCount++;
+      } catch (err) {
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+
+        await client.query(
+          `
+          UPDATE payroll_entries
+          SET
+            payment_status = 'failed',
+            payment_error = $1
+          WHERE id = $2
+          `,
+          [err.message, emp.id]
+        );
+
+        failedCount++;
+      }
+    }
+
+    // 10️⃣ Update payroll period
+    const finalStatus =
+      failedCount === 0
+        ? "paid"
+        : successCount === 0
+        ? "failed"
+        : "partially_paid";
+
     await client.query(
-      `UPDATE payroll_entries SET status='paid' WHERE payroll_period_id=$1`,
-      [periodId]
+      `
+      UPDATE payroll_periods
+      SET
+        status = $1,
+        paid_by = $2,
+        paid_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $3
+      `,
+      [finalStatus, paid_by, periodId]
     );
 
     await client.query("COMMIT");
-    return res.json({ status: "success", message: "Payroll marked as paid and accounting entry posted" });
 
+    return res.json({
+      status: "success",
+      message: "Payroll processing completed",
+      summary: {
+        total: entries.length,
+        success: successCount,
+        failed: failedCount,
+        status: finalStatus,
+      },
+    });
   } catch (err) {
     await client.query("ROLLBACK");
-    return res.status(500).json({ status: "error", message: err.message });
+    return res.status(500).json({
+      status: "error",
+      message: err.message,
+    });
   } finally {
     client.release();
   }
 };
-
 
 // ============================================================
 // ── PAYROLL ENTRIES & PAYSLIPS ───────────────────────────────
