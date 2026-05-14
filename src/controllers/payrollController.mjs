@@ -201,7 +201,7 @@ export const getSalaryProfile = async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT sp.*,
-              sg.name AS grade_name, sg.basic_salary AS grade_salary, sg.salary_account_number,
+              sg.name AS grade_name, sg.basic_salary AS grade_salary, s.salary_account_number,
               s.full_name, s.role, s.department, s.job_title,
               s.bank_name, s.bank_account_number, s.bank_account_name,
               s.tin_number, s.ssnit_number, s.hire_date, s.employment_type
