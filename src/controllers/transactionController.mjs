@@ -529,7 +529,7 @@ const tellerFloatRes = await client.query(
           tellerFloat.balance || 0
         );
 
-        if (tellerFloatBalance < amount) {
+        if ( tx.payment_method !== 'momo' && tellerFloatBalance < amount) {
           throw new Error(
             `Insufficient teller float balance. Available float: GHS ${tellerFloatBalance.toFixed(
               2
