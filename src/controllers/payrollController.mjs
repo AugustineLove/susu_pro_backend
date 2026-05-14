@@ -5,6 +5,7 @@
 
 import pool from "../db.mjs";
 import { postJournalEntry, resolveCOA } from "../services/accountingHelper.mjs";
+import { sendCustomerMessageBackend } from "./smsController.mjs";
 
 // ─────────────────────────────────────────────────────────────
 // GHANA PAYE CALCULATOR
