@@ -117,7 +117,7 @@ async function computeStaffPayroll(client, staffId, companyId) {
   const grossSalary     = parseFloat((basicSalary + totalAllowances).toFixed(2));
 
   // 5. SSNIT — based on BASIC salary only (per SSNIT Act 766)
-  const ssnitEmployee    = profile.ssnit_exempt ? 0 : parseFloat((basicSalary * 0.055).toFixed(2)); // 5.5%
+  const ssnitEmployee    = profile.ssnit_exempt ? 0 : parseFloat((basicSalary * 0.05).toFixed(2)); // 5.5%
   const ssnitEmployer    = profile.ssnit_exempt ? 0 : parseFloat((basicSalary * 0.13).toFixed(2));  // 13%
   const tier2            = profile.ssnit_exempt ? 0 : parseFloat((basicSalary * 0.05).toFixed(2));  // 5% from employer share → Tier 2
 
