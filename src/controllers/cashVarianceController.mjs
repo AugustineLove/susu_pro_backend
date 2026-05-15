@@ -352,7 +352,6 @@ export const recordVariance = async (req, res) => {
         variance_amount: varianceAmt,
         variance_type:   vType,
         journal_entry_id: jeId,
-        sms_sent:        smsSent,
       },
     });
 
