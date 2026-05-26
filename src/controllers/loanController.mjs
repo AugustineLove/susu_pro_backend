@@ -676,7 +676,7 @@ export const logRepayment = async (req, res) => {
     );
 
     // ── 6. Resolve COA accounts ───────────────────────────
-    const floatCoaId       = await resolveCOA(client, company_id, "1010-01"); // Cash in
+    const floatCoaId       = await resolveCOA(client, company_id, "1010-60"); // Cash in
     const loanRecCoaId     = await resolveCOA(client, company_id, "1030-01"); // Principal receivable
     const loanIntIncCoaId  = await resolveCOA(client, company_id, "4010-01"); // Loan interest income
 
@@ -1117,7 +1117,7 @@ export const approveLoan = async (req, res) => {
     
     try {
       loanRecCoaId = await resolveCOA(client, companyId, "1030-01"); // Loan Receivable
-      floatCoaId = await resolveCOA(client, companyId, "1010-01"); // MB Float
+      floatCoaId = await resolveCOA(client, companyId, "1010-60"); // MB Float
     } catch (err) {
       console.warn("COA resolution failed, continuing without journal entries:", err.message);
       // Don't fail the approval if COA doesn't exist

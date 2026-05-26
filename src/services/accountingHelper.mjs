@@ -154,7 +154,7 @@ export function cashCoaCode(paymentMethod, user) {
   // =========================
   if (isWithdrawalContext) {
     if (method === "cash") return "1010-02"; // teller float
-    if (method === "momo") return "1010-01"; // cash vault
+    if (method === "momo") return "1010-04"; // cash vault
     if (method === "bank") return "1020-01";
   }
 
@@ -163,12 +163,12 @@ export function cashCoaCode(paymentMethod, user) {
   // =========================
   if (method === "momo") return "1010-03";
   if (method === "bank") return "1020-01";
-  if (method === "cash") return "1010-01";
+  if (method === "cash") return "1010-60";
 
   // =========================
   // FALLBACK
   // =========================
-  return "1010-01";
+  return "1010-60";
 }
 
 // ─────────────────────────────────────────────────────────────

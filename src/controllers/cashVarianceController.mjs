@@ -214,7 +214,7 @@ export const recordVariance = async (req, res) => {
     let jeId = null;
 
     if (vType !== "balanced") {
-      const floatCoaId = await resolveCOA(client, companyId, "1010-01");
+      const floatCoaId = await resolveCOA(client, companyId, "1010-60");
 
       if (vType === "shortage") {
         // Dr Cash Shortage Expense  ← loss

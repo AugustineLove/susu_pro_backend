@@ -15,7 +15,7 @@
 --
 -- Sub-account convention:
 --   1010      = parent
---   1010-01   = sub-account of 1010
+--   1010-60   = sub-account of 1010
 -- ============================================================
 
 
@@ -67,13 +67,13 @@ BEGIN
     true, true, p_created_by
   ) RETURNING id INTO v_cash_vault;
 
-  -- 1010-01 Cash in Vault
+  -- 1010-60 Cash in Vault
   INSERT INTO chart_of_accounts (
     company_id, code, name, description,
     account_type, category, normal_balance,
     parent_id, is_sub_account, is_system_account, created_by
   ) VALUES (
-    p_company_id, '1010-01', 'Cash in Vault',
+    p_company_id, '1010-60', 'Cash in Vault',
     'Main office vault cash',
     'asset', 'cash_and_cash_equivalents', 'debit',
     v_cash_vault, true, true, p_created_by

@@ -135,7 +135,7 @@ export const addBudget = async (req, res) => {
     const floatCoaId = await resolveCOA(client, company_id, "1010-02"); // Mobile Banker Float
     const vaultCoaId = source === "bank"
       ? await resolveCOA(client, company_id, "1020-01")                 // Bank account
-      : await resolveCOA(client, company_id, "1010-01");                // Cash in Vault
+      : await resolveCOA(client, company_id, "1010-60");                // Cash in Vault
 
     await postJournalEntry(client, {
       companyId:   company_id,
@@ -200,7 +200,7 @@ export const recordEntry = async (req, res) => {
     // ASSET
     // ────────────────────────────────────────────────────
     //   Dr  Fixed Assets sub-account   (1050-01 | 1050-02 | 1050)
-    //   Cr  Cash in Vault              (1010-01)
+    //   Cr  Cash in Vault              (1010-60)
     // ────────────────────────────────────────────────────
     if (type === "asset") {
       const { name, value, date, category, usefulLife, depreciation_rate, recorded_by } = req.body;
@@ -232,7 +232,7 @@ export const recordEntry = async (req, res) => {
           : "1050";
 
       const assetCoaId = await resolveCOA(client, company_id, assetCoaCode);
-      const vaultCoaId = await resolveCOA(client, company_id, "1010-01");
+      const vaultCoaId = await resolveCOA(client, company_id, "1010-60");
 
       const creator = recorded_by || (await client.query(
         `SELECT id FROM staff WHERE company_id = $1 LIMIT 1`, [company_id]
@@ -267,7 +267,7 @@ export const recordEntry = async (req, res) => {
     // EXPENSE
     // ────────────────────────────────────────────────────
     //   Dr  Expense COA  (mapped by category)
-    //   Cr  Cash in Vault  (1010-01)
+    //   Cr  Cash in Vault  (1010-60)
     //
     //   Also deducts from today's float (existing logic).
     // ────────────────────────────────────────────────────
@@ -355,7 +355,7 @@ export const recordEntry = async (req, res) => {
       }[category?.toLowerCase()] || "5050";
 
       const expCoaId   = await resolveCOA(client, company_id, expCoaCode);
-      const vaultCoaId = await resolveCOA(client, company_id, "1010-01");
+      const vaultCoaId = await resolveCOA(client, company_id, "1010-60");
 
       const creator = recorded_by || (await client.query(
         `SELECT id FROM staff WHERE company_id = $1 LIMIT 1`, [company_id]
@@ -388,7 +388,7 @@ export const recordEntry = async (req, res) => {
     // ────────────────────────────────────────────────────
     // PAYMENT / REVENUE
     // ────────────────────────────────────────────────────
-    //   Dr  Cash in Vault  (1010-01)    — asset ↑
+    //   Dr  Cash in Vault  (1010-60)    — asset ↑
     //   Cr  Income COA     (mapped by category)
     // ────────────────────────────────────────────────────
     } else if (type === "payment") {
@@ -419,7 +419,7 @@ export const recordEntry = async (req, res) => {
       }[category?.toLowerCase()] || "4040";
 
       const incCoaId   = await resolveCOA(client, company_id, incCoaCode);
-      const vaultCoaId = await resolveCOA(client, company_id, "1010-01");
+      const vaultCoaId = await resolveCOA(client, company_id, "1010-60");
 
       const creator = recorded_by || (await client.query(
         `SELECT id FROM staff WHERE company_id = $1 LIMIT 1`, [company_id]

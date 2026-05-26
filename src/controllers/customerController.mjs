@@ -176,7 +176,6 @@ export const findCustomers = async (req, res) => {
     const {
       page = '1',
       limit = '20',
-
       name,
       phone_number,
       email,

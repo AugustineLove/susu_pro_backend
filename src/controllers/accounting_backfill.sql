@@ -427,7 +427,7 @@ END $$;
 -- E. COMPANY EXPENSES
 -- ============================================================
 -- Dr  Operating Expenses (5050)
--- Cr  Cash in Vault      (1010-01)
+-- Cr  Cash in Vault      (1010-60)
 
 DO $$
 DECLARE
@@ -467,7 +467,7 @@ BEGIN
       ELSE                   get_coa_id(v_rec.company_id, '5050')
     END;
 
-    v_cash_coa := get_coa_id(v_rec.company_id, '1010-01');
+    v_cash_coa := get_coa_id(v_rec.company_id, '1010-60');
 
     IF v_exp_coa IS NULL OR v_cash_coa IS NULL THEN
       RAISE WARNING 'Missing COA for expense %, skipping', v_rec.id;
@@ -498,7 +498,7 @@ END $$;
 -- ============================================================
 -- F. COMPANY REVENUE / PAYMENTS
 -- ============================================================
--- Dr  Cash in Vault  (1010-01)
+-- Dr  Cash in Vault  (1010-60)
 -- Cr  Other Income   (4040) — or specific sub-account by category
 
 DO $$
@@ -535,7 +535,7 @@ BEGIN
   ELSE                    get_coa_id(v_rec.company_id, '4040')
 END;
 
-    v_cash_coa := get_coa_id(v_rec.company_id, '1010-01');
+    v_cash_coa := get_coa_id(v_rec.company_id, '1010-60');
 
     IF v_inc_coa IS NULL OR v_cash_coa IS NULL THEN
       RAISE WARNING 'Missing COA for revenue %, skipping', v_rec.id;
@@ -567,7 +567,7 @@ END $$;
 -- G. FIXED ASSETS
 -- ============================================================
 -- Dr  Fixed Assets / sub-account  (1050-01 or 1050-02)
--- Cr  Cash in Vault               (1010-01)
+-- Cr  Cash in Vault               (1010-60)
 -- And record accumulated depreciation if depreciation_rate is set
 
 DO $$
@@ -605,7 +605,7 @@ BEGIN
       ELSE                   get_coa_id(v_rec.company_id, '1050')
     END;
 
-    v_cash_coa    := get_coa_id(v_rec.company_id, '1010-01');
+    v_cash_coa    := get_coa_id(v_rec.company_id, '1010-60');
     v_dep_exp_coa := get_coa_id(v_rec.company_id, '5020');
     v_dep_acc_coa := get_coa_id(v_rec.company_id, '1060');
 

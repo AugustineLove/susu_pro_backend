@@ -142,7 +142,6 @@ CREATE INDEX idx_cv_type          ON cash_variances(variance_type);
 -- ── 3. Running variance ledger per staff ─────────────────────
 -- Useful for quick "how much does this staff owe / how much
 -- excess has been recorded" without scanning the full table.
-
 CREATE VIEW staff_variance_summary AS
 SELECT
   staff_id,
@@ -188,4 +187,7 @@ SELECT
   MAX(variance_date) AS last_variance_date
 
 FROM cash_variances
-GROUP BY staff_id, company_id;
+
+GROUP BY
+  staff_id,
+  company_id;
