@@ -11,7 +11,6 @@ export const checkDayNotClosed = async (req, res, next) => {
   }
 
   try {
-    // 🧠 Detect date from multiple possible fields
     const possibleDates = [
       req.body.transaction_date,
       req.body.registration_date,

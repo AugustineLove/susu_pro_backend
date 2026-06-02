@@ -1297,7 +1297,7 @@ export const reverseWithdrawal = async (req, res) => {
     // ── 7. Reversal journal entry ─────────────────────────
     // Dr  Cash / Float          — asset ↑  (money comes back in)
     // Cr  Customer deposits     — liability ↑  (we owe the customer again)
-    const cashCode    = cashCoaCode(tx.payment_method);
+    const cashCode    = cashCoaCode(tx.payment_method, 'teller');
     const cashCoaId    = await resolveCOA(client, account.company_id, cashCode);
     const depositCoaId = await resolveCOA(client, account.company_id, depositCoaCode(account.account_type));
 
