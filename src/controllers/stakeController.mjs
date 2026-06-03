@@ -56,10 +56,15 @@ export const stakeMoney = async (req, res) => {
     ? new Date(transaction_date).toISOString().slice(0, 10)
     : todayStr;
 
+    console.log(`Todays date: ${todayStr}`)
+    console.log(`Entry date: ${entryDate}`)
+
   // A transaction is "backdated" (or future-dated) if its date differs
   // from today. Such transactions are held as pending — no balance
   // mutation and no journal entry until a supervisor approves them.
   const isBackdated = entryDate !== todayStr;
+
+  console.log(`Is backdated?: ${isBackdated}`)
 
   const client = await pool.connect();
   try {

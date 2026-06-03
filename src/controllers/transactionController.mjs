@@ -1602,3 +1602,333 @@ export const reverseTransfer = async (req, res) => {
     client.release();
   }
 };
+
+export const approveBackdatedTransaction = async (req, res) => {
+  const { transaction_id, approved_by, company_id } = req.body;
+
+  // ── Validation ────────────────────────────────────────────
+  if (!transaction_id || !approved_by || !company_id)
+    return res.status(400).json({
+      status:  "fail",
+      message: "transaction_id, approved_by, and company_id are required",
+    });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // ── Fetch & lock the transaction ──────────────────────
+    // FOR UPDATE prevents a race condition where two supervisors
+    // approve the same transaction simultaneously.
+    const txRes = await client.query(
+      `SELECT t.*,
+              a.balance       AS account_balance,
+              a.minimum_balance,
+              a.account_type,
+              a.status        AS account_status,
+              a.customer_id
+       FROM transactions t
+       JOIN accounts a ON a.id = t.account_id
+       WHERE t.id         = $1
+         AND t.company_id = $2
+       FOR UPDATE OF t`,
+      [transaction_id, company_id]
+    );
+
+    if (txRes.rowCount === 0)
+      throw Object.assign(new Error("Transaction not found"), { status: 404 });
+
+    const tx = txRes.rows[0];
+
+    // ── Guard rails ───────────────────────────────────────
+    // Only transactions that were flagged pending because of backdating
+    // should come through this endpoint. We identify them by:
+    //   1. status = 'pending'
+    //   2. transaction_date differs from created_at date  (backdated marker)
+    //   3. accounting_je_id IS NULL  (no JE was posted at creation)
+    //
+    // Today-withdrawals also have status='pending' but they already have
+    // a draft accounting_je_id — those go through approveTransaction instead.
+
+    if (tx.status !== "pending")
+      throw Object.assign(
+        new Error(`Transaction is already '${tx.status}' — cannot approve`),
+        { status: 400 }
+      );
+
+    const createdDateStr     = new Date(tx.created_at).toISOString().slice(0, 10);
+    const transactionDateStr = new Date(tx.transaction_date).toISOString().slice(0, 10);
+    const isBackdated        = transactionDateStr !== createdDateStr;
+
+    if (!isBackdated)
+      throw Object.assign(
+        new Error(
+          "This transaction is not backdated. Use approveTransaction for same-day pending withdrawals."
+        ),
+        { status: 400 }
+      );
+
+    if (tx.accounting_je_id !== null)
+      throw Object.assign(
+        new Error(
+          "A journal entry already exists for this transaction. Use approveTransaction instead."
+        ),
+        { status: 400 }
+      );
+
+    if (tx.account_status === "Inactive")
+      throw Object.assign(new Error("Account is inactive"), { status: 400 });
+
+    const numericAmount = parseFloat(tx.amount);
+    const isLoan        = tx.account_type.toLowerCase().includes("loan");
+    const entryDate     = transactionDateStr; // JE is dated on the original transaction date
+
+    // ── Re-validate balance for backdated withdrawals ─────
+    // Balance may have changed between submission and approval,
+    // so we re-check now with the live balance under the row lock.
+    if (tx.type === "withdrawal") {
+      const currentBalance = parseFloat(tx.account_balance);
+      const minBalance     = parseFloat(tx.minimum_balance || 0);
+
+      if (numericAmount > currentBalance)
+        throw Object.assign(
+          new Error(
+            `Insufficient balance. Current: ${currentBalance.toFixed(2)}, Requested: ${numericAmount.toFixed(2)}`
+          ),
+          { status: 400, code: "insufficient_balance" }
+        );
+
+      if (currentBalance - numericAmount < minBalance)
+        throw Object.assign(
+          new Error(
+            `Minimum balance violation. Balance after withdrawal would be ${(currentBalance - numericAmount).toFixed(2)}, minimum is ${minBalance.toFixed(2)}`
+          ),
+          { status: 400, code: "minimum_balance" }
+        );
+    }
+
+    // ── Resolve COA accounts ──────────────────────────────
+    const cashCode    = cashCoaCode(tx.payment_method, tx.type === "withdrawal" ? "teller" : null);
+    const depositCode = depositCoaCode(tx.account_type);
+    const cashCoaId    = await resolveCOA(client, company_id, cashCode);
+    const depositCoaId = await resolveCOA(client, company_id, depositCode);
+
+    // ── Resolve accounting period for the backdated date ──
+    // The JE must land in the period that covers the original
+    // transaction_date, not today. If that period is closed,
+    // we reject — a supervisor must reopen the period first.
+    const periodRes = await client.query(
+      `SELECT id, status
+       FROM accounting_periods
+       WHERE company_id = $1
+         AND start_date <= $2
+         AND end_date   >= $2
+       LIMIT 1`,
+      [company_id, entryDate]
+    );
+
+    if (periodRes.rowCount === 0)
+      throw Object.assign(
+        new Error(`No accounting period found covering ${entryDate}`),
+        { status: 400, code: "no_period" }
+      );
+
+    const period = periodRes.rows[0];
+
+    if (period.status === "closed")
+      throw Object.assign(
+        new Error(
+          `The accounting period covering ${entryDate} is closed. Reopen it before approving this transaction.`
+        ),
+        { status: 400, code: "period_closed" }
+      );
+
+    const periodId = period.id;
+
+    // ── Post the journal entry ────────────────────────────
+    // This is the JE that was intentionally skipped at creation time.
+    // It is dated on the original transaction_date so the books reflect
+    // when the economic event actually occurred.
+
+    let newJeId;
+
+    if (tx.type === "deposit") {
+      if (!isLoan) {
+        // ── BACKDATED DEPOSIT (savings / susu) ─────────────
+        //   Dr  Cash / Float          (asset ↑)
+        //   Cr  Customer Deposits     (liability ↑)
+        await postJournalEntry(client, {
+          companyId:   company_id,
+          description: tx.description || `Backdated deposit — ${tx.account_type}`,
+          entryDate,
+          source:      "customer_deposit",
+          sourceId:    tx.id,
+          sourceTable: "transactions",
+          createdBy:   approved_by,
+          lines: [
+            {
+              coaId:      cashCoaId,
+              dc:         "debit",
+              amount:     numericAmount,
+              customerId: tx.customer_id,
+              accountId:  tx.account_id,
+              staffId:    tx.staff_id || approved_by,
+            },
+            {
+              coaId:      depositCoaId,
+              dc:         "credit",
+              amount:     numericAmount,
+              customerId: tx.customer_id,
+              accountId:  tx.account_id,
+              staffId:    tx.staff_id || approved_by,
+            },
+          ],
+        });
+      } else {
+        // ── BACKDATED LOAN REPAYMENT ────────────────────────
+        //   Dr  Cash / Float          (asset ↑)
+        //   Cr  Loan Receivable       (asset ↓ — balance paid down)
+        const loanReceivableId = await resolveCOA(client, company_id, "1030-01");
+        await postJournalEntry(client, {
+          companyId:   company_id,
+          description: tx.description || `Backdated loan repayment`,
+          entryDate,
+          source:      "loan_repayment",
+          sourceId:    tx.id,
+          sourceTable: "transactions",
+          createdBy:   approved_by,
+          lines: [
+            {
+              coaId:      cashCoaId,
+              dc:         "debit",
+              amount:     numericAmount,
+              customerId: tx.customer_id,
+              accountId:  tx.account_id,
+            },
+            {
+              coaId:      loanReceivableId,
+              dc:         "credit",
+              amount:     numericAmount,
+              customerId: tx.customer_id,
+              accountId:  tx.account_id,
+            },
+          ],
+        });
+      }
+
+      // postJournalEntry returns the JE — fetch it by source so we can
+      // pin it on the transaction record below.
+      const jeRes = await client.query(
+        `SELECT id FROM journal_entries
+         WHERE source_id    = $1
+           AND source_table = 'transactions'
+           AND company_id   = $2
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [tx.id, company_id]
+      );
+      newJeId = jeRes.rows[0]?.id || null;
+
+      // ── Update balance for backdated deposit ─────────────
+      const balanceOp = isLoan ? "balance - $1" : "balance + $1";
+      await client.query(
+        `UPDATE accounts
+         SET balance = ${balanceOp}, last_activity_at = NOW()
+         WHERE id = $2`,
+        [numericAmount, tx.account_id]
+      );
+
+    } else {
+      // ── BACKDATED WITHDRAWAL ───────────────────────────────
+      // We create a DRAFT JE first (same pattern as today-withdrawals),
+      // then immediately flip it to posted — because the supervisor's
+      // approval IS the posting event.
+      //
+      //   Dr  Customer Deposits     (liability ↓)
+      //   Cr  Cash / Teller Float   (asset ↓)
+
+      const refRes = await client.query(
+        "SELECT generate_journal_ref($1) AS ref",
+        [company_id]
+      );
+      const ref = refRes.rows[0].ref;
+
+      const jeInsert = await client.query(
+        `INSERT INTO journal_entries
+           (company_id, reference_no, description, entry_date,
+            source, source_id, source_table, period_id, status,
+            created_by, posted_by, posted_at)
+         VALUES ($1,$2,$3,$4,'customer_withdrawal',$5,'transactions',$6,'posted',$7,$7,NOW())
+         RETURNING id`,
+        [
+          company_id, ref,
+          tx.description || `Backdated withdrawal — ${tx.account_type}`,
+          entryDate,
+          tx.id, periodId, approved_by,
+        ]
+      );
+      newJeId = jeInsert.rows[0].id;
+
+      await client.query(
+        `INSERT INTO journal_entry_lines
+           (journal_entry_id, coa_id, debit_credit, amount, customer_id, account_id, staff_id)
+         VALUES ($1,$2,'debit',$3,$4,$5,$6)`,
+        [newJeId, depositCoaId, numericAmount, tx.customer_id, tx.account_id, tx.staff_id || approved_by]
+      );
+      await client.query(
+        `INSERT INTO journal_entry_lines
+           (journal_entry_id, coa_id, debit_credit, amount, customer_id, account_id, staff_id)
+         VALUES ($1,$2,'credit',$3,$4,$5,$6)`,
+        [newJeId, cashCoaId, numericAmount, tx.customer_id, tx.account_id, tx.staff_id || approved_by]
+      );
+
+      // ── Deduct balance for backdated withdrawal ───────────
+      await client.query(
+        `UPDATE accounts
+         SET balance = balance - $1, last_activity_at = NOW()
+         WHERE id = $2`,
+        [numericAmount, tx.account_id]
+      );
+    }
+
+    // ── Stamp the transaction as approved ─────────────────
+    const updatedTx = await client.query(
+      `UPDATE transactions
+       SET status            = 'completed',
+           processing_status = 'paid',
+           accounting_je_id  = $1,
+           approved_by       = $2,
+           approved_at       = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [newJeId, approved_by, transaction_id]
+    );
+
+    // ── Fetch final account state ─────────────────────────
+    const updatedAcc = await client.query(
+      `SELECT id, account_type, balance FROM accounts WHERE id = $1`,
+      [tx.account_id]
+    );
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      status:         "success",
+      message:        `Backdated ${tx.type} approved — journal entry posted for ${entryDate}`,
+      transaction:    updatedTx.rows[0],
+      updatedAccount: updatedAcc.rows[0],
+      journal_entry_id: newJeId,
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("approveBackdatedTransaction error:", err);
+    return res.status(err.status || 500).json({
+      status:  err.status === 400 ? "fail" : "error",
+      message: err.message,
+      ...(err.code ? { code: err.code } : {}),
+    });
+  } finally {
+    client.release();
+  }
+};
