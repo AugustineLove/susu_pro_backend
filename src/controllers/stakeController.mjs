@@ -39,72 +39,133 @@ export const stakeMoney = async (req, res) => {
     return res.status(400).json({ status: "fail", message: "Required fields missing" });
 
   if (!["deposit", "withdrawal"].includes(transaction_type))
-    return res.status(400).json({ status: "fail", message: "transaction_type must be 'deposit' or 'withdrawal'" });
+    return res.status(400).json({
+      status: "fail",
+      message: "transaction_type must be 'deposit' or 'withdrawal'",
+    });
 
   if (payment_method && !["momo", "cash", "bank"].includes(payment_method))
     return res.status(400).json({ status: "fail", message: "Invalid payment_method" });
+
+  // ── Date resolution & backdating check ───────────────────
+  // Normalise both sides to YYYY-MM-DD strings in server local time
+  // so a transaction_date of "2025-05-01" is never accidentally shifted
+  // by timezone offset when compared to today.
+  const todayStr = new Date().toISOString().slice(0, 10); // "2025-06-03"
+  const entryDate = transaction_date
+    ? new Date(transaction_date).toISOString().slice(0, 10)
+    : todayStr;
+
+  // A transaction is "backdated" (or future-dated) if its date differs
+  // from today. Such transactions are held as pending — no balance
+  // mutation and no journal entry until a supervisor approves them.
+  const isBackdated = entryDate !== todayStr;
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    // ── Fetch the savings account ─────────────────────────
+    // ── Fetch the savings / loan account ─────────────────
     const accRes = await client.query(
-      `SELECT a.id, a.balance, a.account_type, a.minimum_balance, a.status, a.customer_id
-       FROM accounts a WHERE a.id = $1`,
+      `SELECT a.id, a.balance, a.account_type,
+              a.minimum_balance, a.status, a.customer_id
+       FROM accounts a
+       WHERE a.id = $1`,
       [account_id]
     );
-    if (accRes.rowCount === 0) throw Object.assign(new Error("Account not found"), { status: 404 });
+    if (accRes.rowCount === 0)
+      throw Object.assign(new Error("Account not found"), { status: 404 });
 
     const account       = accRes.rows[0];
     const numericAmount = parseFloat(amount);
+    const isLoan        = account.account_type.toLowerCase().includes("loan");
 
     if (account.status === "Inactive")
       throw Object.assign(new Error("Account is inactive"), { status: 400 });
+
     if (numericAmount <= 0)
       throw Object.assign(new Error("Amount must be greater than 0"), { status: 400 });
 
-    // ── Withdrawal pre-checks ────────────────────────────
+    // ── Withdrawal pre-checks ─────────────────────────────
+    // Run balance checks even for backdated withdrawals so we catch
+    // obvious problems up front (the supervisor still sees live balance).
     if (transaction_type === "withdrawal") {
-      if (numericAmount > parseFloat(account.balance))
-        throw Object.assign(new Error("Insufficient balance"), { status: 400, code: "insufficient_balance" });
-      if (numericAmount > parseFloat(account.balance) - parseFloat(account.minimum_balance || 0))
-        throw Object.assign(new Error("Minimum balance violation"), { status: 400, code: "minimum_balance" });
+      const currentBalance = parseFloat(account.balance);
+      const minBalance     = parseFloat(account.minimum_balance || 0);
+
+      if (numericAmount > currentBalance)
+        throw Object.assign(new Error("Insufficient balance"), {
+          status: 400,
+          code:   "insufficient_balance",
+        });
+
+      if (currentBalance - numericAmount < minBalance)
+        throw Object.assign(new Error("Minimum balance violation"), {
+          status: 400,
+          code:   "minimum_balance",
+        });
     }
 
-    // ── Record stake ──────────────────────────────────────
+    // ── Record the stake ──────────────────────────────────
     await client.query(
-      `INSERT INTO stakes (account_id, amount, staked_by) VALUES ($1,$2,$3)`,
+      `INSERT INTO stakes (account_id, amount, staked_by) VALUES ($1, $2, $3)`,
       [account_id, numericAmount, staked_by]
     );
 
-    // ── Determine transaction status ──────────────────────
-    let txStatus         = "completed";
+    // ── Determine transaction & processing statuses ───────
+    //
+    // BACKDATED / FUTURE-DATED  → always pending regardless of type.
+    //   Balance is NOT touched; journal entry is NOT posted.
+    //   Both will happen inside approveTransaction.
+    //
+    // TODAY — DEPOSIT           → completed immediately; balance updated now.
+    // TODAY — WITHDRAWAL        → pending (needs teller/manager approval);
+    //                             balance deducted in approveTransaction.
+    //   processing_status "paid"  = cash/bank channel (offline confirmation)
+    //   processing_status "pending" = MoMo (async network confirmation)
+
+    let txStatus          = "pending";
     let processing_status = null;
+    let skipBalanceUpdate = false;
+    let skipJournalEntry  = false;
 
-    const isLoan = account.account_type.toLowerCase().includes("loan");
-
-    if (transaction_type === "deposit") {
-      // Deposits update balance immediately
-      const balanceOp = isLoan ? "balance - $1" : "balance + $1";
-      await client.query(
-        `UPDATE accounts SET balance = ${balanceOp}, last_activity_at = NOW() WHERE id = $2`,
-        [numericAmount, account_id]
-      );
+    if (isBackdated) {
+      // ── BACKDATED / FUTURE-DATED path ──────────────────
+      // Nothing touches the ledger until approval.
+      txStatus          = "pending";
+      processing_status = "pending";
+      skipBalanceUpdate = true;
+      skipJournalEntry  = true;
+    } else if (transaction_type === "deposit") {
+      // ── TODAY DEPOSIT ───────────────────────────────────
+      txStatus          = "completed";
       processing_status = "paid";
-    }
-
-    if (transaction_type === "withdrawal") {
-      // Balance is NOT deducted yet — happens on approveTransaction
+      skipBalanceUpdate = false;
+      skipJournalEntry  = false;
+    } else {
+      // ── TODAY WITHDRAWAL ────────────────────────────────
       txStatus          = "pending";
       processing_status = payment_method === "momo" ? "pending" : "paid";
+      skipBalanceUpdate = true;   // balance deducted on approval
+      skipJournalEntry  = false;  // draft JE posted now, flipped to posted on approval
+    }
+
+    // ── Update account balance (today-deposit only) ───────
+    if (!skipBalanceUpdate && transaction_type === "deposit") {
+      const balanceOp = isLoan ? "balance - $1" : "balance + $1";
+      await client.query(
+        `UPDATE accounts
+         SET balance = ${balanceOp}, last_activity_at = NOW()
+         WHERE id = $2`,
+        [numericAmount, account_id]
+      );
     }
 
     // ── Insert transaction record ─────────────────────────
     const txFields = [
-      "account_id","amount","type","status","processing_status",
-      "payment_method","created_by","company_id","description",
-      "unique_code","staff_id","withdrawal_type"
+      "account_id", "amount", "type", "status", "processing_status",
+      "payment_method", "created_by", "company_id", "description",
+      "unique_code", "staff_id", "withdrawal_type",
     ];
     const txValues = [
       account_id, numericAmount, transaction_type, txStatus, processing_status,
@@ -119,139 +180,151 @@ export const stakeMoney = async (req, res) => {
 
     const placeholders = txValues.map((_, i) => `$${i + 1}`);
     const txRes = await client.query(
-      `INSERT INTO transactions (${txFields.join(",")}) VALUES (${placeholders.join(",")}) RETURNING *`,
+      `INSERT INTO transactions (${txFields.join(",")})
+       VALUES (${placeholders.join(",")})
+       RETURNING *`,
       txValues
     );
     const tx = txRes.rows[0];
-    const tellerFloatOrCashAccount = transaction_type === 'withdrawal' ? 'teller' : null; 
 
-    // ── Resolve COA accounts ──────────────────────────────
-    const cashCode    = cashCoaCode(payment_method, tellerFloatOrCashAccount);
-    const depositCode = depositCoaCode(account.account_type);
+    // ── Journal entries ───────────────────────────────────
+    // Skipped entirely for backdated / future-dated transactions.
+    // approveTransaction is responsible for posting them.
+    if (!skipJournalEntry) {
+      const cashCode    = cashCoaCode(payment_method, transaction_type === "withdrawal" ? "teller" : null);
+      const depositCode = depositCoaCode(account.account_type);
+      const cashCoaId    = await resolveCOA(client, company_id, cashCode);
+      const depositCoaId = await resolveCOA(client, company_id, depositCode);
 
-    const cashCoaId    = await resolveCOA(client, company_id, cashCode);
-    const depositCoaId = await resolveCOA(client, company_id, depositCode);
-
-    const entryDate = transaction_date
-      ? new Date(transaction_date).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
-
-    // ── Post journal entry ────────────────────────────────
-    if (transaction_type === "deposit") {
-      // ── DEPOSIT ──
-      // Dr Cash/Float   — asset increases
-      // Cr Cust Deposits — liability increases
-      if (!isLoan) {
-        await postJournalEntry(client, {
-          companyId:   company_id,
-          description: description || `Customer deposit — ${account.account_type}`,
-          entryDate,
-          source:      "customer_deposit",
-          sourceId:    tx.id,
-          sourceTable: "transactions",
-          createdBy:   staked_by,
-          lines: [
-            {
-              coaId:      cashCoaId,
-              dc:         "debit",
-              amount:     numericAmount,
-              customerId: account.customer_id,
-              accountId:  account_id,
-              staffId:    staff_id || staked_by,
-            },
-            {
-              coaId:      depositCoaId,
-              dc:         "credit",
-              amount:     numericAmount,
-              customerId: account.customer_id,
-              accountId:  account_id,
-              staffId:    staff_id || staked_by,
-            },
-          ],
-        });
+      if (transaction_type === "deposit") {
+        // ── TODAY DEPOSIT — post immediately ───────────────
+        // DEPOSIT (non-loan):
+        //   Dr  Cash / Float         (asset ↑)
+        //   Cr  Customer Deposits    (liability ↑)
+        //
+        // DEPOSIT (loan repayment):
+        //   Dr  Cash / Float         (asset ↑)
+        //   Cr  Loan Receivable      (asset ↓  — balance paid down)
+        if (!isLoan) {
+          await postJournalEntry(client, {
+            companyId:   company_id,
+            description: description || `Customer deposit — ${account.account_type}`,
+            entryDate,
+            source:      "customer_deposit",
+            sourceId:    tx.id,
+            sourceTable: "transactions",
+            createdBy:   staked_by,
+            lines: [
+              {
+                coaId:      cashCoaId,
+                dc:         "debit",
+                amount:     numericAmount,
+                customerId: account.customer_id,
+                accountId:  account_id,
+                staffId:    staff_id || staked_by,
+              },
+              {
+                coaId:      depositCoaId,
+                dc:         "credit",
+                amount:     numericAmount,
+                customerId: account.customer_id,
+                accountId:  account_id,
+                staffId:    staff_id || staked_by,
+              },
+            ],
+          });
+        } else {
+          const loanReceivableId = await resolveCOA(client, company_id, "1030-01");
+          await postJournalEntry(client, {
+            companyId:   company_id,
+            description: description || `Loan repayment`,
+            entryDate,
+            source:      "loan_repayment",
+            sourceId:    tx.id,
+            sourceTable: "transactions",
+            createdBy:   staked_by,
+            lines: [
+              {
+                coaId:      cashCoaId,
+                dc:         "debit",
+                amount:     numericAmount,
+                customerId: account.customer_id,
+                accountId:  account_id,
+              },
+              {
+                coaId:      loanReceivableId,
+                dc:         "credit",
+                amount:     numericAmount,
+                customerId: account.customer_id,
+                accountId:  account_id,
+              },
+            ],
+          });
+        }
       } else {
-        // Loan repayment deposit:
-        // Dr Cash/Float         — asset increases (we received money)
-        // Cr Loan Receivable    — asset decreases (loan balance paid down)
-        const loanReceivableId = await resolveCOA(client, company_id, "1030-01");
-        await postJournalEntry(client, {
-          companyId:   company_id,
-          description: description || `Loan repayment`,
-          entryDate,
-          source:      "loan_repayment",
-          sourceId:    tx.id,
-          sourceTable: "transactions",
-          createdBy:   staked_by,
-          lines: [
-            {
-              coaId: cashCoaId,       dc: "debit",  amount: numericAmount,
-              customerId: account.customer_id, accountId: account_id,
-            },
-            {
-              coaId: loanReceivableId, dc: "credit", amount: numericAmount,
-              customerId: account.customer_id, accountId: account_id,
-            },
-          ],
-        });
+        // ── TODAY WITHDRAWAL — post DRAFT JE ───────────────
+        // Balance is NOT deducted yet. We create a draft journal entry
+        // so there is an audit trail from the moment the request lands.
+        // approveTransaction will flip status → 'posted' and deduct balance.
+        //
+        //   Dr  Customer Deposits  (liability ↓)
+        //   Cr  Cash / Teller Float (asset ↓)
+        const refRes  = await client.query(
+          "SELECT generate_journal_ref($1) AS ref",
+          [company_id]
+        );
+        const ref = refRes.rows[0].ref;
+
+        const periodRes = await client.query(
+          `SELECT id FROM accounting_periods
+           WHERE company_id = $1
+             AND status     = 'open'
+             AND start_date <= $2
+             AND end_date   >= $2
+           LIMIT 1`,
+          [company_id, entryDate]
+        );
+        const periodId = periodRes.rows[0]?.id || null;
+
+        const pendingJe = await client.query(
+          `INSERT INTO journal_entries
+             (company_id, reference_no, description, entry_date,
+              source, source_id, source_table, period_id, status, created_by)
+           VALUES ($1,$2,$3,$4,'customer_withdrawal',$5,'transactions',$6,'draft',$7)
+           RETURNING id`,
+          [
+            company_id, ref,
+            description || `Withdrawal request — ${account.account_type}`,
+            entryDate, tx.id, periodId, staked_by,
+          ]
+        );
+        const pendingJeId = pendingJe.rows[0].id;
+
+        await client.query(
+          `INSERT INTO journal_entry_lines
+             (journal_entry_id, coa_id, debit_credit, amount, customer_id, account_id, staff_id)
+           VALUES ($1,$2,'debit',$3,$4,$5,$6)`,
+          [pendingJeId, depositCoaId, numericAmount, account.customer_id, account_id, staff_id || staked_by]
+        );
+        await client.query(
+          `INSERT INTO journal_entry_lines
+             (journal_entry_id, coa_id, debit_credit, amount, customer_id, account_id, staff_id)
+           VALUES ($1,$2,'credit',$3,$4,$5,$6)`,
+          [pendingJeId, cashCoaId, numericAmount, account.customer_id, account_id, staff_id || staked_by]
+        );
+
+        // Pin the draft JE to the transaction so approveTransaction can
+        // find and post it without a separate lookup.
+        await client.query(
+          `UPDATE transactions SET accounting_je_id = $1 WHERE id = $2`,
+          [pendingJeId, tx.id]
+        );
       }
     }
 
-    if (transaction_type === "withdrawal") {
-      // ── WITHDRAWAL (PENDING) ──
-      // We record a DRAFT entry now — it gets posted in approveTransaction.
-      // This keeps the audit trail from the moment the request is submitted.
-      // Dr Customer Deposits  — liability will decrease (debit reduces credit-normal account)
-      // Cr Cash / Float       — asset will decrease
-      //
-      // Note: we post as DRAFT here, approveTransaction will flip it to posted.
-      const refRes = await client.query(
-        "SELECT generate_journal_ref($1) AS ref", [company_id]
-      );
-      const ref = refRes.rows[0].ref;
-
-      const periodRes = await client.query(
-        `SELECT id FROM accounting_periods
-         WHERE company_id = $1 AND status = 'open'
-           AND start_date <= $2 AND end_date >= $2
-         LIMIT 1`,
-        [company_id, entryDate]
-      );
-      const periodId = periodRes.rows[0]?.id || null;
-
-      const pendingJe = await client.query(
-        `INSERT INTO journal_entries
-           (company_id, reference_no, description, entry_date,
-            source, source_id, source_table, period_id, status, created_by)
-         VALUES ($1,$2,$3,$4,'customer_withdrawal',$5,'transactions',$6,'draft',$7)
-         RETURNING id`,
-        [company_id, ref,
-         description || `Withdrawal request — ${account.account_type}`,
-         entryDate, tx.id, periodId, staked_by]
-      );
-      const pendingJeId = pendingJe.rows[0].id;
-
-      // explicit line inserts — debit side
-      await client.query(
-        `INSERT INTO journal_entry_lines
-           (journal_entry_id, coa_id, debit_credit, amount, customer_id, account_id, staff_id)
-         VALUES ($1,$2,'debit',$3,$4,$5,$6)`,
-        [pendingJeId, depositCoaId, numericAmount, account.customer_id, account_id, staff_id || staked_by]
-      );
-      await client.query(
-        `INSERT INTO journal_entry_lines
-           (journal_entry_id, coa_id, debit_credit, amount, customer_id, account_id, staff_id)
-         VALUES ($1,$2,'credit',$3,$4,$5,$6)`,
-        [pendingJeId, cashCoaId, numericAmount, account.customer_id, account_id, staff_id || staked_by]
-      );
-
-      // Store je id on the transaction so approveTransaction can find it
-      await client.query(
-        `UPDATE transactions SET accounting_je_id = $1 WHERE id = $2`,
-        [pendingJeId, tx.id]
-      );
-    }
-
-    // ── Fetch final account state ─────────────────────────
+    // ── Fetch final account balance for the response ──────
+    // For backdated/pending transactions the balance is unchanged,
+    // but we still return the current state so the UI stays accurate.
     const updatedAcc = await client.query(
       `SELECT id, account_type, balance FROM accounts WHERE id = $1`,
       [account_id]
@@ -259,9 +332,20 @@ export const stakeMoney = async (req, res) => {
 
     await client.query("COMMIT");
 
+    // ── Build a clear response message ───────────────────
+    const messages = {
+      deposit_today:     "Deposit successful",
+      deposit_backdated: "Backdated deposit submitted — pending supervisor approval",
+      withdrawal_today:  "Withdrawal request submitted — pending approval",
+      withdrawal_backdated: "Backdated withdrawal submitted — pending supervisor approval",
+    };
+    const msgKey = `${transaction_type}_${isBackdated ? "backdated" : "today"}`;
+
     return res.status(200).json({
-      status:   "success",
-      message:  transaction_type === "deposit" ? "Deposit successful" : "Withdrawal request submitted",
+      status:         "success",
+      message:        messages[msgKey],
+      is_backdated:   isBackdated,
+      entry_date:     entryDate,
       transaction:    tx,
       updatedAccount: updatedAcc.rows[0],
     });
