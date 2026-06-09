@@ -19,6 +19,7 @@ import momoAgentRouter from './momoAgentRoutes.mjs';
 import accountingRoutes from './accountingRoutes.mjs';
 import payRollRouter from './payrollRoutes.mjs';
 import cashVarianceRouter from './cashVarianceRoutes.mjs';
+import investmentRouter from './investmentRoutes.mjs';
 
 const allRoutes = Router();
 
@@ -41,5 +42,6 @@ allRoutes.use('/api/agent', momoAgentRouter);
 allRoutes.use('/api/accounting/:companyId', accountingRoutes);
 allRoutes.use('/api/payroll/:companyId/', payRollRouter);
 allRoutes.use('/api/variance/:companyId/', cashVarianceRouter);
+allRoutes.use('/api/investments', investmentRouter);
 
 export default allRoutes;
