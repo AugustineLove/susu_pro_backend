@@ -24,13 +24,13 @@ import {
 // Adjust codes to match your actual chart of accounts.
 
 /** Fixed-deposit / term-deposit liability account */
-const fixedDepositCoaCode = () => "2020-01"; // Term deposits liability
+const fixedDepositCoaCode = () => "2010-03"; // Term deposits liability
 
 /** Investment income (interest payable) */
-const interestPayableCoaCode = () => "2030-01"; // Accrued interest payable
+const interestPayableCoaCode = () => "2070-01"; // Accrued interest payable
 
 /** Interest expense when paying out */
-const interestExpenseCoaCode = () => "5010-01"; // Interest expense
+const interestExpenseCoaCode = () => "5040"; // Interest expense
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ export const getInvestmentProducts = async (req, res) => {
       rate_type: "fixed",
       early_withdrawal_penalty: 0,
       auto_rollover: false,
-      coa_code: "2020-02",
+      coa_code: "2010-04",
     },
     {
       id: "susu_plus",
@@ -121,7 +121,7 @@ export const getInvestmentProducts = async (req, res) => {
       rate_type: "compound",
       early_withdrawal_penalty: 5,
       auto_rollover: false,
-      coa_code: "2020-03",
+      coa_code: "2010-05",
     },
     {
       id: "money_market",
@@ -135,7 +135,7 @@ export const getInvestmentProducts = async (req, res) => {
       rate_type: "variable",
       early_withdrawal_penalty: 0,
       auto_rollover: true,
-      coa_code: "2020-04",
+      coa_code: "2010-06",
     },
   ];
 
