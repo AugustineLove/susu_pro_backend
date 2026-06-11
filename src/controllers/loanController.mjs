@@ -1117,7 +1117,7 @@ export const approveLoan = async (req, res) => {
     
     try {
       loanRecCoaId = await resolveCOA(client, companyId, "1030-01"); // Loan Receivable
-      floatCoaId = await resolveCOA(client, companyId, "1010-60"); // MB Float
+      floatCoaId = await resolveCOA(client, companyId, "1010-01"); // MB Float
     } catch (err) {
       console.warn("COA resolution failed, continuing without journal entries:", err.message);
       // Don't fail the approval if COA doesn't exist
