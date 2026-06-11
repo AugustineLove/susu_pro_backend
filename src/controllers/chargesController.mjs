@@ -26,9 +26,9 @@ import {
 const CHARGE_COA_MAP = {
   commission:      "4020",     // Commission income
   service_fee:     "4030-01",  // Service fee income
-  maintenance_fee: "4030-02",  // Account maintenance fee income
-  penalty:         "4040-01",  // Penalty & late fee income
-  processing_fee:  "4030-03",  // Processing fee income
+  maintenance_fee: "4030-03",  // Account maintenance fee income
+  penalty:         "4040-05",  // Penalty & late fee income
+  processing_fee:  "4030",  // Processing fee income
   ledger_fee:      "4030-04",  // Ledger / admin fee income
   insurance:       "4050-01",  // Insurance premium income
   custom:          "4090",     // Miscellaneous income
