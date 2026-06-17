@@ -4,6 +4,7 @@ import {
   resolveCOA,
   cashCoaCode,
   depositCoaCode,
+  resolveAccountingRule,
 } from "../services/accountingHelper.mjs";
 
 // ─────────────────────────────────────────────────────────────
