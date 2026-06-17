@@ -6,6 +6,7 @@ import {
   resolveCOA,
   cashCoaCode,
   depositCoaCode,
+  resolveAccountingRule,
 } from "../services/accountingHelper.mjs";
 
 
@@ -377,6 +378,7 @@ export const approveTransaction = async (req, res) => {
         status,
         created_by,
         payment_method,
+        company_id,
         accounting_je_id
       FROM transactions
       WHERE id = $1
@@ -791,6 +793,12 @@ const tellerFloatRes = await client.query(
       depositCode
     );
 
+    const rule = await resolveAccountingRule(client, account.company_id, {
+      transaction_type: tx.type,
+      account_subtype: account.account_type,
+      payment_method: tx.payment_method
+    })
+
     const entryDate = new Date()
       .toISOString()
       .slice(0, 10);
@@ -823,7 +831,7 @@ const tellerFloatRes = await client.query(
 
         lines: [
           {
-            coaId: depositCoaId,
+            coaId: rule.debitCoaId,
             dc: "debit",
             amount,
             description:
@@ -833,7 +841,7 @@ const tellerFloatRes = await client.query(
             staffId: approverId,
           },
           {
-            coaId: cashCoaId,
+            coaId: rule.creditCoaId,
             dc: "credit",
             amount,
             description:
