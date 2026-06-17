@@ -180,3 +180,117 @@ export function depositCoaCode(accountType) {
   if (t.includes("fixed") || t.includes("lock")) return "2010-02";
   return "2010-01"; // daily susu (default)
 }
+
+
+// export async function resolveCOA(client, companyId, code) {
+//   const res = await client.query(
+//     `SELECT id FROM chart_of_accounts
+//      WHERE company_id = $1 AND code = $2 AND is_deleted = false
+//      LIMIT 1`,
+//     [companyId, code]
+//   );
+//   if (res.rowCount === 0)
+//     throw new Error(`COA account "${code}" not found for company ${companyId}. Run accounting_seed.sql first.`);
+//   return res.rows[0].id;
+// }
+
+// async function nextRef(client, companyId) {
+//   const res = await client.query(
+//     "SELECT generate_journal_ref($1) AS ref",
+//     [companyId]
+//   );
+//   return res.rows[0].ref;
+// }
+
+/**
+ * resolveAccountingRule
+ * ─────────────────────
+ * Looks up the accounting_rules table to find the correct
+ * debit/credit COA pair for a given transaction event.
+ *
+ * Match priority (most specific → least specific):
+ *   1. type + account_subtype + payment_method   (exact)
+ *   2. type + account_subtype + NULL method      (any method)
+ *   3. type + NULL subtype   + payment_method    (any subtype)
+ *   4. type + NULL subtype   + NULL method       (fallback)
+ *
+ * @param {object} client          pg PoolClient inside an open transaction
+ * @param {string} companyId
+ * @param {object} opts
+ *   transaction_type   string   — 'deposit' | 'withdrawal' | 'loan_repayment' | etc.
+ *   account_subtype    string?  — account_type value from the accounts table
+ *   payment_method     string?  — 'cash' | 'momo' | 'bank'
+ *
+ * @returns {{ debitCoaId: string, creditCoaId: string, label: string }}
+ * @throws  if no matching rule found (prevents silent mis-postings)
+ */
+export async function resolveAccountingRule(client, companyId, {
+  transaction_type,
+  account_subtype = null,
+  payment_method  = null,
+}) {
+  // Normalise inputs
+  const subtype = account_subtype
+    ? normaliseSubtype(account_subtype)
+    : null;
+  const method = payment_method?.toLowerCase() || null;
+
+  const res = await client.query(
+    `SELECT
+       r.debit_coa_id,
+       r.credit_coa_id,
+       r.label,
+       -- Specificity score: higher = more specific = wins
+       (CASE WHEN r.account_subtype IS NOT NULL THEN 2 ELSE 0 END +
+        CASE WHEN r.payment_method  IS NOT NULL THEN 1 ELSE 0 END) AS specificity
+     FROM accounting_rules r
+     WHERE r.company_id        = $1
+       AND r.transaction_type  = $2
+       AND r.is_active         = true
+       AND (r.account_subtype  = $3 OR r.account_subtype IS NULL)
+       AND (r.payment_method   = $4 OR r.payment_method  IS NULL)
+     ORDER BY specificity DESC
+     LIMIT 1`,
+    [companyId, transaction_type, subtype, method]
+  );
+
+  if (res.rowCount === 0) {
+    throw new Error(
+      `No accounting rule found for ` +
+      `type="${transaction_type}", ` +
+      `subtype="${subtype ?? 'any'}", ` +
+      `method="${method ?? 'any'}" ` +
+      `in company ${companyId}. ` +
+      `Go to Settings → Accounting Rules to add one.`
+    );
+  }
+
+  const row = res.rows[0];
+  return {
+    debitCoaId:  row.debit_coa_id,
+    creditCoaId: row.credit_coa_id,
+    label:       row.label,
+  };
+}
+
+/**
+ * Map the raw account_type string from the accounts table
+ * to the subtype key used in accounting_rules.
+ *
+ * Add entries here as you add new account types.
+ */
+function normaliseSubtype(accountType) {
+  const t = (accountType || "").toLowerCase().trim();
+
+  if (t.includes("loan"))                          return "loan";
+  if (t.includes("fixed") || t.includes("lock"))  return "fixed_deposit";
+  if (t.includes("susu"))                          return "susu";
+  if (t.includes("savings"))                       return "savings";
+  if (t.includes("investment") || t.includes("fixed_deposit") ||
+      t.includes("treasury")   || t.includes("money_market") ||
+      t.includes("bond")       || t.includes("susu_plus"))
+    return "fixed_deposit";
+
+  // Default — maps to the NULL / catch-all rules
+  return t || null;
+}
