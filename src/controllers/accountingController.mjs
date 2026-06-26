@@ -481,35 +481,61 @@ export const getProfitAndLoss = async (req, res) => {
 
   console.log(startDate, endDate);
   const dateFilter = startDate && endDate
-    ? `AND je.entry_date BETWEEN '${startDate}' AND '${endDate}'`
+    ? `WHERE je.entry_date BETWEEN '${startDate}' AND '${endDate}'`
     : "";
 
   try {
     const result = await pool.query(
       `SELECT
-        coa.code, coa.name, coa.account_type, coa.category,
-        coa.is_sub_account, coa.parent_id,
-        CASE coa.normal_balance
-          WHEN 'credit' THEN
+    coa.code,
+    coa.name,
+    coa.account_type,
+    coa.category,
+    coa.is_sub_account,
+    coa.parent_id,
+    CASE coa.normal_balance
+        WHEN 'credit' THEN
             COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0) -
-            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0)
-          WHEN 'debit' THEN
-            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0) -
+            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'), 0)
+        WHEN 'debit' THEN
+            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'), 0) -
             COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0)
-        END AS amount
-      FROM chart_of_accounts coa
-      LEFT JOIN journal_entry_lines jel ON jel.coa_id = coa.id
-      LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id
-        AND je.status = 'posted'
-        AND je.company_id = $1
-        ${dateFilter}
-      WHERE coa.company_id  = $1
-        AND coa.account_type IN ('income', 'expense')
-        AND coa.is_active    = true
-        AND coa.is_deleted   = false
-      GROUP BY coa.id
-      ORDER BY coa.account_type DESC, coa.code`,
-      [companyId]
+    END AS amount
+FROM chart_of_accounts coa
+
+LEFT JOIN (
+    SELECT
+        jel.coa_id,
+        jel.amount,
+        jel.debit_credit
+    FROM journal_entry_lines jel
+    INNER JOIN journal_entries je
+        ON je.id = jel.journal_entry_id
+    ${dateFilter}
+      AND je.status = 'posted'
+      AND je.company_id = $1
+) jel
+    ON jel.coa_id = coa.id
+
+WHERE coa.company_id = $1
+  AND coa.account_type IN ('income', 'expense')
+  AND coa.is_active = true
+  AND coa.is_deleted = false
+
+GROUP BY
+    coa.id,
+    coa.code,
+    coa.name,
+    coa.account_type,
+    coa.category,
+    coa.is_sub_account,
+    coa.parent_id,
+    coa.normal_balance
+
+ORDER BY
+    coa.account_type DESC,
+    coa.code`,
+	[companyId]
     );
 
     const income   = result.rows.filter(r => r.account_type === "income");
