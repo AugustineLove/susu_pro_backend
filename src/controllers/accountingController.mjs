@@ -479,6 +479,7 @@ export const getProfitAndLoss = async (req, res) => {
   const { companyId } = req.params;
   const { startDate, endDate } = req.query;
 
+  console.log(startDate, endDate);
   const dateFilter = startDate && endDate
     ? `AND je.entry_date BETWEEN '${startDate}' AND '${endDate}'`
     : "";
