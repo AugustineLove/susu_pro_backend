@@ -51,7 +51,7 @@ export const sendCustomerMessageBackend = async (messageTo, messageFrom, message
         data : data
         };
 
-    if(companyName === 'BigGod Susu'){
+    if(messageFrom === 'BigGod Susu'){
       axios(config)
     .then(function (response) {
     console.log(JSON.stringify(response.data));

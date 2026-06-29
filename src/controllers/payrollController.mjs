@@ -1113,7 +1113,7 @@ export const markPayrollPaid = async (req, res) => {
 
           sendCustomerMessageBackend(
             emp.phone,
-            "Payroll System",
+            "BigGod Susu",
             message
           ).catch((err) =>
             console.warn("SMS failed:", err.message)
