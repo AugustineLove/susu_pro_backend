@@ -3,6 +3,7 @@ import { createAccount, getAccountsByCustomer, getAllCompanyAccounts, getCardRep
 import { authenticateToken } from "../middlewares/authenticateToken.mjs";
 import { replaceAccountCard, unlockAccount, updateAccountSettings, verifyTransactionPin } from "../controllers/accountSettingsController.mjs";
 import { generateAccountStatement } from "../controllers/customerAccountStatementController.mjs";
+import { getAccountCardSimulation } from "../controllers/cardSimulationController.mjs";
 
 export const accountRouter = Router();
 
@@ -20,6 +21,7 @@ accountRouter.get('/last-customer-account-number/:staffId', getLastCustomerAccou
 accountRouter.get('/:accountNumber/statement', generateAccountStatement);
 
 accountRouter.get('/search', authenticateToken, searchAccountByNumber);
+accountRouter.get('/:accountId/card', getAccountCardSimulation);
 accountRouter.get('/:accountId/card-replacements', authenticateToken, getCardReplacements);
 accountRouter.post('/:accountId/card/replace-with-record', authenticateToken, requestCardReplacement);
 accountRouter.patch('/:accountId/toggle-status', toggleAccountStatus);
