@@ -232,6 +232,148 @@ export const updateAccountSettings = async (req, res) => {
 };
 
 
+const VALID_RATE_TYPES = ["interest_rate", "daily_rate"];
+
+// ── Apply a rate change ───────────────────────────────────────────────────
+// Writes/replaces a row in account_rate_changes for (account, rate_type, date)
+// AND updates the account's live rate column, in a single transaction.
+export const applyRateChange = async (req, res) => {
+  const { accountId } = req.params;
+  const companyId = req.user?.companyId;
+  const userId = req.user?.id;
+  const userName = req.user?.name || req.user?.full_name || null;
+
+  const { rate_type, new_rate, effective_date, reason } = req.body;
+
+  try {
+    // ── Validation ─────────────────────────────────────────────────────
+    if (!VALID_RATE_TYPES.includes(rate_type)) {
+      return res.status(400).json({
+        message: `rate_type must be one of: ${VALID_RATE_TYPES.join(", ")}.`,
+      });
+    }
+
+    if (new_rate === undefined || new_rate === null || isNaN(new_rate) || Number(new_rate) < 0) {
+      return res.status(400).json({ message: "new_rate must be a non-negative number." });
+    }
+
+    if (!effective_date || isNaN(Date.parse(effective_date))) {
+      return res.status(400).json({ message: "A valid effective_date is required." });
+    }
+
+    if (!userId || !companyId) {
+      return res.status(401).json({ message: "Unable to identify the staff member making this change." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Lock the account row so concurrent rate changes can't race
+      const { rows: accountRows } = await client.query(
+        `SELECT id, interest_rate, daily_rate
+         FROM accounts
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR UPDATE`,
+        [accountId, companyId]
+      );
+
+      if (accountRows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ message: "Account not found." });
+      }
+
+      const account = accountRows[0];
+      const previousRate = rate_type === "interest_rate" ? account.interest_rate : account.daily_rate;
+
+      // Upsert into history: same account + rate_type + effective_date
+      // REPLACES the existing row instead of creating a duplicate.
+      const { rows: historyRows } = await client.query(
+        `INSERT INTO account_rate_changes
+           (account_id, company_id, rate_type, effective_date,
+            previous_rate, new_rate, changed_by, changed_by_name, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (account_id, rate_type, effective_date)
+         DO UPDATE SET
+           previous_rate   = EXCLUDED.previous_rate,
+           new_rate        = EXCLUDED.new_rate,
+           changed_by      = EXCLUDED.changed_by,
+           changed_by_name = EXCLUDED.changed_by_name,
+           reason          = EXCLUDED.reason,
+           updated_at      = now()
+         RETURNING *`,
+        [accountId, companyId, rate_type, effective_date, previousRate, new_rate, userId, userName, reason || null]
+      );
+
+      // Push the new rate onto the account itself
+      const rateColumn = rate_type === "interest_rate" ? "interest_rate" : "daily_rate";
+      const { rows: updatedAccountRows } = await client.query(
+        `UPDATE accounts
+         SET ${rateColumn} = $1,
+             rate_last_changed_at = now(),
+             rate_last_changed_by = $2,
+             updated_at = now()
+         WHERE id = $3 AND company_id = $4
+         RETURNING id, account_number, interest_rate, daily_rate,
+                   rate_last_changed_at, rate_last_changed_by, updated_at`,
+        [new_rate, userId, accountId, companyId]
+      );
+
+      await client.query("COMMIT");
+
+      return res.status(200).json({
+        account: updatedAccountRows[0],
+        rate_change: historyRows[0],
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("applyRateChange error:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+// ── Fetch rate change history for an account ──────────────────────────────
+// Optional ?rate_type=interest_rate|daily_rate query param to filter.
+export const getAccountRateHistory = async (req, res) => {
+  const { accountId } = req.params;
+  const companyId = req.user?.companyId;
+  const { rate_type } = req.query;
+
+  try {
+    if (rate_type !== undefined && !VALID_RATE_TYPES.includes(rate_type)) {
+      return res.status(400).json({
+        message: `rate_type must be one of: ${VALID_RATE_TYPES.join(", ")}.`,
+      });
+    }
+
+    const params = [accountId, companyId];
+    let query = `
+      SELECT id, account_id, rate_type, effective_date, previous_rate, new_rate,
+             changed_by, changed_by_name, reason, created_at, updated_at
+      FROM account_rate_changes
+      WHERE account_id = $1 AND company_id = $2
+    `;
+
+    if (rate_type) {
+      params.push(rate_type);
+      query += ` AND rate_type = $${params.length}`;
+    }
+
+    query += ` ORDER BY effective_date DESC, created_at DESC`;
+
+    const { rows } = await pool.query(query, params);
+    return res.status(200).json(rows);
+  } catch (error) {
+    console.error("getAccountRateHistory error:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/accounts/:accountId/card/replace
 // Logs a card replacement: increments count, stamps timestamps, resets status

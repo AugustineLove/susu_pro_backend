@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { createAccount, getAccountsByCustomer, getAllCompanyAccounts, getCardReplacements, getLastAccountNumber, getLastAccountNumbersByStaff, getLastCustomerAccountNumber, requestCardReplacement, searchAccountByNumber, toggleAccountStatus } from "../controllers/accountController.mjs";
 import { authenticateToken } from "../middlewares/authenticateToken.mjs";
-import { applyRateChange, replaceAccountCard, unlockAccount, updateAccountSettings, verifyTransactionPin } from "../controllers/accountSettingsController.mjs";
+import { applyRateChange, getAccountRateHistory, replaceAccountCard, unlockAccount, updateAccountSettings, verifyTransactionPin } from "../controllers/accountSettingsController.mjs";
 import { generateAccountStatement } from "../controllers/customerAccountStatementController.mjs";
 import { getAccountCardSimulation } from "../controllers/cardSimulationController.mjs";
 
@@ -23,7 +23,7 @@ accountRouter.get('/:accountNumber/statement', generateAccountStatement);
 accountRouter.get('/search', authenticateToken, searchAccountByNumber);
 accountRouter.get('/:accountId/rate-history',
   authenticateToken,
-  applyRateChange
+  getAccountRateHistory
 )
 accountRouter.get('/:accountId/card-simulate', getAccountCardSimulation);
 accountRouter.get('/:accountId/card-replacements', authenticateToken, getCardReplacements);
