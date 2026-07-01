@@ -1,153 +1,253 @@
 // controllers/cardSimulationController.mjs
 import pool from "../db.mjs";
 
-const PAGE_LINES  = 31;
-const LEFT_LINES  = 15;
-const RIGHT_LINES = 16; // unused directly but documents the split
+const PAGE_LINES = 31;
+const LEFT_LINES = 15;
 
-/**
- * Walks a chronological list of transactions and figures out, for every
- * rate-sized "line", which transaction's date completed it.
- * Also returns any leftover partial progress toward the next line.
- */
-function buildLineProgress(transactions, rate) {
-  const lineDates = [];
-  let cumulative = 0;
-  let nextThreshold = rate;
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// ── Rate timeline ────────────────────────────────────────────────────────
+// Builds an ascending list of { startDate, rate } periods from the account's
+// daily_rate change history. startDate === null means "from the beginning".
+function buildRatePeriods(rateHistoryRows, fallbackRate) {
+  if (!rateHistoryRows.length) {
+    return [{ startDate: null, rate: Number(fallbackRate) }];
+  }
+
+  const first = rateHistoryRows[0];
+  const initialRate = first.previous_rate != null ? Number(first.previous_rate) : Number(first.new_rate);
+
+  const periods = [{ startDate: null, rate: initialRate }];
+  for (const row of rateHistoryRows) {
+    periods.push({ startDate: row.effective_date, rate: Number(row.new_rate) });
+  }
+  return periods;
+}
+
+function getRateForDate(periods, date) {
+  const t = new Date(date).getTime();
+  let applicable = periods[0].rate;
+  for (const period of periods) {
+    if (period.startDate === null) {
+      applicable = period.rate;
+      continue;
+    }
+    if (new Date(period.startDate).getTime() <= t) {
+      applicable = period.rate;
+    } else {
+      break;
+    }
+  }
+  return applicable;
+}
+
+// ── Core simulation ──────────────────────────────────────────────────────
+// Walks ALL transactions (deposits + withdrawals) in one true chronological
+// stream and builds up "pages" as living objects. This is what lets a
+// withdrawal correctly target the earliest still-open page while deposits
+// keep filling a later page independently, and lets rate changes force a
+// clean page break.
+function simulateCard(transactions, ratePeriods) {
+  const pages = [];
+  const warnings = [];
+
+  const lastPage = () => (pages.length ? pages[pages.length - 1] : null);
+
+  const openNewPage = (rate, startDate) => {
+    const page = {
+      pageNumber: pages.length + 1,
+      rate,
+      pageCapacity: round2(rate * PAGE_LINES),
+      stakedAmount: 0,
+      withdrawnAmount: 0,
+      commissionTaken: 0,
+      status: "open", // 'open' | 'advance' | 'completed' — 'advance' derived at finalize time
+      closedEarly: false,
+      overdrawn: false,
+      startDate,
+      lineDates: [], // lineDates[i] = date the (i+1)-th line was completed
+      partialAmount: 0,
+      partialDate: null,
+    };
+    pages.push(page);
+    return page;
+  };
+
+  // A page accepts new deposits only if it exists, isn't completed, and has room.
+  const currentDepositPage = (rate) => {
+    const p = lastPage();
+    if (!p) return null;
+    if (p.status === "completed") return null;
+    if (p.stakedAmount >= p.pageCapacity - 0.0001) return null;
+    if (p.rate !== rate) return null; // rate changed → force new page
+    return p;
+  };
+
+  const earliestOpenPage = () => pages.find((p) => p.status !== "completed") || null;
 
   for (const tx of transactions) {
-    cumulative += Number(tx.amount);
-    while (cumulative >= nextThreshold - 0.0001) {
-      lineDates.push(tx.transaction_date);
-      nextThreshold += rate;
+    const rate = getRateForDate(ratePeriods, tx.transaction_date);
+    const amount = round2(Number(tx.amount));
+    if (!amount || amount <= 0) continue;
+
+    if (tx.type === "deposit") {
+      let remaining = amount;
+      while (remaining > 0.0001) {
+        let page = currentDepositPage(rate);
+        if (!page) page = openNewPage(rate, tx.transaction_date);
+
+        const spaceLeft = round2(page.pageCapacity - page.stakedAmount);
+        let chunk = round2(Math.min(remaining, spaceLeft));
+
+        // Fill line-by-line so each line gets an accurate completion date.
+        while (chunk > 0.0001) {
+          const filledLines = Math.floor((page.stakedAmount + 0.0001) / page.rate);
+          const lineFillSoFar = round2(page.stakedAmount - filledLines * page.rate);
+          const spaceInLine = round2(page.rate - lineFillSoFar);
+          const fillNow = round2(Math.min(chunk, spaceInLine));
+
+          page.stakedAmount = round2(page.stakedAmount + fillNow);
+          chunk = round2(chunk - fillNow);
+
+          const nowFilledLines = Math.floor((page.stakedAmount + 0.0001) / page.rate);
+          if (nowFilledLines > filledLines) {
+            page.lineDates[nowFilledLines - 1] = tx.transaction_date;
+          }
+        }
+
+        const filledLinesNow = Math.floor((page.stakedAmount + 0.0001) / page.rate);
+        page.partialAmount = round2(page.stakedAmount - filledLinesNow * page.rate);
+        page.partialDate = page.partialAmount > 0.0001 ? tx.transaction_date : null;
+
+        remaining = round2(remaining - (spaceLeft > 0 ? Math.min(remaining, spaceLeft) : 0));
+        if (spaceLeft <= 0.0001) {
+          // defensive: force page rotation if something upstream left 0 space
+          remaining = round2(remaining);
+        }
+      }
+    } else if (tx.type === "withdrawal") {
+      let remaining = amount;
+      let safety = 0;
+
+      while (remaining > 0.0001 && safety < 500) {
+        safety++;
+        let page = earliestOpenPage();
+        if (!page) page = openNewPage(rate, tx.transaction_date);
+
+        // Nothing meaningfully staked (not even one full line) — this page
+        // can't be closed out. Treat as an overdraft against it and stop,
+        // rather than looping forever.
+        if (page.stakedAmount < page.rate - 0.0001) {
+          page.withdrawnAmount = round2(page.withdrawnAmount + remaining);
+          page.overdrawn = true;
+          warnings.push(
+            `Page ${page.pageNumber}: withdrawal recorded (${remaining}) exceeds what has been staked on this page — please verify transaction history.`
+          );
+          remaining = 0;
+          break;
+        }
+
+        // Closure trigger: cash withdrawn reaches (staked − one line),
+        // i.e. everything except the commission line.
+        const closeThreshold = round2(page.stakedAmount - page.rate);
+        const payableBeforeClose = round2(closeThreshold - page.withdrawnAmount);
+        const payNow = round2(Math.min(remaining, Math.max(payableBeforeClose, 0)));
+
+        page.withdrawnAmount = round2(page.withdrawnAmount + payNow);
+        remaining = round2(remaining - payNow);
+
+        if (round2(page.withdrawnAmount) >= closeThreshold - 0.0001) {
+          page.status = "completed";
+          page.commissionTaken = page.rate;
+          page.closedEarly = page.stakedAmount < page.pageCapacity - 0.0001;
+          page.closedAt = tx.transaction_date;
+          // loop continues if remaining > 0 — rolls onto the next open page
+        } else {
+          break; // partial draw, page stays open — done with this transaction
+        }
+      }
     }
   }
 
-  const linesCompleted   = lineDates.length;
-  const partialProgress  = +(cumulative - linesCompleted * rate).toFixed(2);
-
-  return {
-    lineDates,
-    total: +cumulative.toFixed(2),
-    linesCompleted,
-    partialProgress,
-  };
+  return { pages, warnings };
 }
 
-function buildCard({ rate, depositTxs, withdrawalTxs, account }) {
-  const deposits    = buildLineProgress(depositTxs, rate);
-  const withdrawals = buildLineProgress(withdrawalTxs, rate);
+// ── Turn a raw simulated page into the API/UI shape ─────────────────────
+function finalizePage(page) {
+  const linesStaked = page.lineDates.length;
+  const isCompleted = page.status === "completed";
+  const rate = page.rate;
 
-  const pageCapacity = +(rate * PAGE_LINES).toFixed(2);
+  const withdrawnLinesCount = isCompleted
+    ? linesStaked
+    : Math.min(linesStaked, Math.floor(page.withdrawnAmount / rate + 0.0001));
 
-  // ── Withdrawal side: how many pages are fully consumed (stamped) ──
-  const totalWithdrawn        = withdrawals.total;
-  const completedPages        = Math.floor(totalWithdrawn / pageCapacity);
-  const advanceOnCurrentPage  = +(totalWithdrawn - completedPages * pageCapacity).toFixed(2);
+  const partialWithdrawnAmount = isCompleted
+    ? 0
+    : round2(page.withdrawnAmount - withdrawnLinesCount * rate);
 
-  // ── Deposit side: how many lines have actually been staked ──
-  const linesStakedGlobal = deposits.linesCompleted;
-  const pagesForDeposits  = Math.max(1, Math.ceil(linesStakedGlobal / PAGE_LINES) || 1);
-  const pagesForWithdrawals = completedPages + (advanceOnCurrentPage > 0 ? 1 : 0);
-  const totalPages = Math.max(pagesForDeposits, pagesForWithdrawals, 1);
+  const commissionLineNumber = isCompleted && linesStaked > 0 ? linesStaked : null;
 
-  const pages = [];
+  const lines = [];
+  for (let i = 0; i < PAGE_LINES; i++) {
+    const lineNumber = i + 1;
+    const isStakedLine = lineNumber <= linesStaked;
+    const isDepositingLine = !isStakedLine && lineNumber === linesStaked + 1 && page.partialAmount > 0.0001;
 
-  for (let p = 1; p <= totalPages; p++) {
-    const startGlobal = (p - 1) * PAGE_LINES;
-    const linesStakedOnPage = Math.min(PAGE_LINES, Math.max(0, linesStakedGlobal - startGlobal));
-
-    // build the 31 individual lines for this page
-    const lines = [];
-    for (let i = 0; i < PAGE_LINES; i++) {
-      const globalIndex = startGlobal + i;
-      const filled = globalIndex < linesStakedGlobal;
-      const isPending = !filled && globalIndex === linesStakedGlobal && deposits.partialProgress > 0;
-
-      lines.push({
-        lineNumber: i + 1,
-        side: i < LEFT_LINES ? "left" : "right",
-        sideIndex: i < LEFT_LINES ? i + 1 : i - LEFT_LINES + 1,
-        amount: rate,
-        filled,
-        date: filled ? deposits.lineDates[globalIndex] : null,
-        pending: isPending,
-        pendingAmount: isPending ? deposits.partialProgress : 0,
-        pendingPercent: isPending ? Math.round((deposits.partialProgress / rate) * 100) : 0,
-      });
-    }
-
-    // withdrawal status for this page
-    let status, withdrawnOnPage, commissionTaken, balanceOnPage, payoutToCustomer;
-
-    if (p <= completedPages) {
-      // Fully cashed out — stamped, commission line taken
-      status           = "completed";
-      withdrawnOnPage  = pageCapacity;
-      commissionTaken  = rate;
-      payoutToCustomer = +(rate * 30).toFixed(2);
-      balanceOnPage    = 0;
-    } else if (p === completedPages + 1 && advanceOnCurrentPage > 0) {
-      // Partially cashed out — advance, commission untouched
-      status           = "advance";
-      withdrawnOnPage  = advanceOnCurrentPage;
-      commissionTaken  = 0;
-      payoutToCustomer = advanceOnCurrentPage;
-      balanceOnPage    = +(pageCapacity - advanceOnCurrentPage).toFixed(2);
+    let status;
+    if (isCompleted) {
+      if (lineNumber > linesStaked) status = "void"; // abandoned — page closed before this line was ever staked
+      else if (lineNumber === commissionLineNumber) status = "commission";
+      else status = "withdrawn";
+    } else if (lineNumber <= withdrawnLinesCount) {
+      status = "withdrawn";
+    } else if (lineNumber === withdrawnLinesCount + 1 && partialWithdrawnAmount > 0.0001) {
+      status = "partial-withdrawn";
+    } else if (isStakedLine) {
+      status = "staked";
+    } else if (isDepositingLine) {
+      status = "depositing";
     } else {
-      // Not touched by withdrawals yet
-      status           = "open";
-      withdrawnOnPage  = 0;
-      commissionTaken  = 0;
-      payoutToCustomer = 0;
-      balanceOnPage    = pageCapacity;
+      status = "open";
     }
 
-    pages.push({
-      pageNumber: p,
-      pageCapacity,
-      linesStaked: linesStakedOnPage,
-      linesRemaining: PAGE_LINES - linesStakedOnPage,
-      stakedAmount: +(linesStakedOnPage * rate).toFixed(2),
-      status,                 // 'completed' | 'advance' | 'open'
-      withdrawnOnPage: +withdrawnOnPage.toFixed(2),
-      commissionTaken,
-      balanceOnPage,
-      payoutToCustomer,
-      lines,
+    lines.push({
+      lineNumber,
+      side: i < LEFT_LINES ? "left" : "right",
+      sideIndex: i < LEFT_LINES ? i + 1 : i - LEFT_LINES + 1,
+      amount: rate,
+      status,
+      date: isStakedLine ? page.lineDates[i] || null : null,
+      pendingAmount:
+        status === "depositing" ? page.partialAmount : status === "partial-withdrawn" ? partialWithdrawnAmount : 0,
+      pendingPercent:
+        status === "depositing"
+          ? Math.round((page.partialAmount / rate) * 100)
+          : status === "partial-withdrawn"
+          ? Math.round((partialWithdrawnAmount / rate) * 100)
+          : 0,
     });
   }
 
   return {
-    account: {
-      id: account.id,
-      account_number: account.account_number,
-      account_type: account.account_type,
-      status: account.status,
-      start_date: account.created_at,
-      rate,
-      current_balance: Number(account.balance),
-    },
+    pageNumber: page.pageNumber,
     rate,
-    pageCapacity,
-    pageLines: PAGE_LINES,
-    totals: {
-      totalDeposited: deposits.total,
-      totalWithdrawn,
-      totalLinesStaked: linesStakedGlobal,
-      partialDepositProgress: deposits.partialProgress,
-      completedPages,
-      advanceOnCurrentPage,
-      totalCommissionEarned: +(completedPages * rate).toFixed(2),
-      totalPaidToCustomer: +(completedPages * rate * 30 + advanceOnCurrentPage).toFixed(2),
-    },
-    currentPage: completedPages + 1,
-    totalPages,
-    pages,
+    pageCapacity: page.pageCapacity,
+    linesStaked,
+    linesRemaining: PAGE_LINES - linesStaked,
+    stakedAmount: page.stakedAmount,
+    status: isCompleted ? "completed" : page.withdrawnAmount > 0 ? "advance" : "open",
+    closedEarly: !!page.closedEarly,
+    overdrawn: !!page.overdrawn,
+    withdrawnOnPage: round2(page.withdrawnAmount),
+    commissionTaken: round2(page.commissionTaken),
+    balanceOnPage: isCompleted ? 0 : round2(page.stakedAmount - page.withdrawnAmount),
+    payoutToCustomer: isCompleted ? round2(page.stakedAmount - page.commissionTaken) : round2(page.withdrawnAmount),
+    lines,
   };
 }
 
-// GET /api/accounts/:accountId/card
+// GET /api/accounts/:accountId/card-simulate
 export const getAccountCardSimulation = async (req, res) => {
   const { accountId } = req.params;
 
@@ -164,9 +264,9 @@ export const getAccountCardSimulation = async (req, res) => {
     }
 
     const account = accRes.rows[0];
-    const rate = Number(account.daily_rate);
+    const currentRate = Number(account.daily_rate);
 
-    if (!rate || rate <= 0) {
+    if (!currentRate || currentRate <= 0) {
       return res.status(400).json({
         status: "fail",
         message:
@@ -174,6 +274,7 @@ export const getAccountCardSimulation = async (req, res) => {
       });
     }
 
+    // Single chronologically-sorted stream of deposits + withdrawals.
     const txRes = await pool.query(
       `SELECT amount, type, transaction_date
        FROM transactions
@@ -185,12 +286,78 @@ export const getAccountCardSimulation = async (req, res) => {
       [accountId]
     );
 
-    const depositTxs    = txRes.rows.filter((t) => t.type === "deposit");
-    const withdrawalTxs = txRes.rows.filter((t) => t.type === "withdrawal");
+    // Rate change history — daily_rate only, ascending.
+    const rateHistoryRes = await pool.query(
+      `SELECT effective_date, previous_rate, new_rate
+       FROM account_rate_changes
+       WHERE account_id = $1 AND rate_type = 'daily_rate'
+       ORDER BY effective_date ASC, created_at ASC`,
+      [accountId]
+    );
 
-    const card = buildCard({ rate, depositTxs, withdrawalTxs, account });
+    const ratePeriods = buildRatePeriods(rateHistoryRes.rows, currentRate);
+    const { pages: rawPages, warnings } = simulateCard(txRes.rows, ratePeriods);
 
-    return res.status(200).json({ status: "success", data: card });
+    const pages = rawPages.length ? rawPages.map(finalizePage) : [];
+
+    if (pages.length === 0) {
+      // No transactions yet — show one empty page at the current rate.
+      pages.push(
+        finalizePage({
+          pageNumber: 1,
+          rate: currentRate,
+          pageCapacity: round2(currentRate * PAGE_LINES),
+          stakedAmount: 0,
+          withdrawnAmount: 0,
+          commissionTaken: 0,
+          status: "open",
+          closedEarly: false,
+          overdrawn: false,
+          lineDates: [],
+          partialAmount: 0,
+        })
+      );
+    }
+
+    const totalDeposited = round2(
+      txRes.rows.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount), 0)
+    );
+    const totalWithdrawn = round2(
+      txRes.rows.filter((t) => t.type === "withdrawal").reduce((s, t) => s + Number(t.amount), 0)
+    );
+    const completedPages = pages.filter((p) => p.status === "completed").length;
+    const totalCommissionEarned = round2(pages.reduce((s, p) => s + p.commissionTaken, 0));
+    const totalPaidToCustomer = round2(pages.reduce((s, p) => s + p.payoutToCustomer, 0));
+
+    const firstOpenIndex = pages.findIndex((p) => p.status !== "completed");
+    const currentPage = firstOpenIndex >= 0 ? firstOpenIndex + 1 : pages.length;
+
+    return res.status(200).json({
+      status: "success",
+      data: {
+        account: {
+          id: account.id,
+          account_number: account.account_number,
+          account_type: account.account_type,
+          status: account.status,
+          start_date: account.created_at,
+          rate: currentRate, // account's CURRENT rate — individual pages may differ, see page.rate
+          current_balance: Number(account.balance),
+        },
+        pageLines: PAGE_LINES,
+        totals: {
+          totalDeposited,
+          totalWithdrawn,
+          completedPages,
+          totalCommissionEarned,
+          totalPaidToCustomer,
+        },
+        currentPage,
+        totalPages: pages.length,
+        warnings,
+        pages,
+      },
+    });
   } catch (error) {
     console.error("getAccountCardSimulation error:", error.message);
     return res.status(500).json({ status: "error", message: "Internal server error" });
