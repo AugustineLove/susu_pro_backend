@@ -378,7 +378,7 @@ export const getGeneralLedger = async (req, res) => {
         JOIN chart_of_accounts coa ON coa.id = jel.coa_id
         LEFT JOIN customers    cu  ON cu.id  = jel.customer_id
         ${where}
-        ORDER BY je.entry_date DESC, jel.id DESC
+        ORDER BY je.created_at DESC, jel.id DESC
         LIMIT $${pi} OFFSET $${pi+1}`,
         [...values, Number(limit), offset]
       ),
