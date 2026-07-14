@@ -1169,7 +1169,7 @@ export const approveLoan = async (req, res) => {
               coaId: floatCoaId,
               dc: "credit",
               amount: disbAmount,
-              description: "Cash paid out from mobile banker float",
+              description: "Cash paid out from vault cash",
               customerId: loan.customer_id,
               // REMOVED: accountId doesn't exist in loans table
             },

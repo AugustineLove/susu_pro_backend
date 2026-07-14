@@ -45,8 +45,17 @@ function getRateForDate(periods, date) {
 // Walks ALL transactions (deposits + withdrawals) in one true chronological
 // stream and builds up "pages" as living objects. This is what lets a
 // withdrawal correctly target the earliest still-open page while deposits
-// keep filling a later page independently, and lets rate changes force a
-// clean page break.
+// keep filling a later page independently.
+//
+// Rate-change rule: a rate change never tears an in-progress page apart.
+// Each page's rate is fixed the moment the page is opened. When a deposit
+// arrives, it keeps filling the currently-open page at THAT page's own rate
+// until the page is fully staked (31 lines) — only once the page is full
+// does the next chunk of the deposit spill onto a brand-new page, which is
+// then opened at whatever rate is in effect on the transaction's date. This
+// is what makes a same-day rate change correctly finish out the old page
+// first (e.g. 2 remaining lines at the old rate) before the new rate ever
+// touches a line.
 function simulateCard(transactions, ratePeriods) {
   const pages = [];
   const warnings = [];
@@ -73,13 +82,15 @@ function simulateCard(transactions, ratePeriods) {
     return page;
   };
 
-  // A page accepts new deposits only if it exists, isn't completed, and has room.
-  const currentDepositPage = (rate) => {
+  // A page accepts new deposits only if it exists, isn't completed, and has
+  // room. NOTE: rate changes do NOT force a page break here — a page keeps
+  // the rate it was opened with until it is fully staked. Rate transitions
+  // only ever happen at a page boundary (see simulateCard's deposit branch).
+  const currentDepositPage = () => {
     const p = lastPage();
     if (!p) return null;
     if (p.status === "completed") return null;
     if (p.stakedAmount >= p.pageCapacity - 0.0001) return null;
-    if (p.rate !== rate) return null; // rate changed → force new page
     return p;
   };
 
@@ -93,13 +104,16 @@ function simulateCard(transactions, ratePeriods) {
     if (tx.type === "deposit") {
       let remaining = amount;
       while (remaining > 0.0001) {
-        let page = currentDepositPage(rate);
+        let page = currentDepositPage();
+        // Only a freshly-opened page picks up "today's" rate. An
+        // already-open page keeps filling at its own fixed rate.
         if (!page) page = openNewPage(rate, tx.transaction_date);
 
         const spaceLeft = round2(page.pageCapacity - page.stakedAmount);
         let chunk = round2(Math.min(remaining, spaceLeft));
 
-        // Fill line-by-line so each line gets an accurate completion date.
+        // Fill line-by-line (at the page's own rate) so each line gets an
+        // accurate completion date.
         while (chunk > 0.0001) {
           const filledLines = Math.floor((page.stakedAmount + 0.0001) / page.rate);
           const lineFillSoFar = round2(page.stakedAmount - filledLines * page.rate);
@@ -124,6 +138,10 @@ function simulateCard(transactions, ratePeriods) {
           // defensive: force page rotation if something upstream left 0 space
           remaining = round2(remaining);
         }
+        // If remaining > 0, the loop repeats: currentDepositPage() will now
+        // return null (this page is full/completed), so a brand-new page
+        // opens at the rate in effect on tx.transaction_date — this is the
+        // one and only point where a rate change actually takes hold.
       }
     } else if (tx.type === "withdrawal") {
       let remaining = amount;
@@ -148,7 +166,9 @@ function simulateCard(transactions, ratePeriods) {
         }
 
         // Closure trigger: cash withdrawn reaches (staked − one line),
-        // i.e. everything except the commission line.
+        // i.e. everything except the commission line. Once a page is
+        // closed this way, anything left over from this withdrawal rolls
+        // automatically onto the next open page (loop continues).
         const closeThreshold = round2(page.stakedAmount - page.rate);
         const payableBeforeClose = round2(closeThreshold - page.withdrawnAmount);
         const payNow = round2(Math.min(remaining, Math.max(payableBeforeClose, 0)));
@@ -247,6 +267,28 @@ function finalizePage(page) {
   };
 }
 
+// Synthetic "cover" page — page 1 of the ledger. It carries no stakes; it's
+// just the front plate of the book. Real staking starts on page 2.
+function buildCoverPage(account) {
+  return {
+    pageNumber: 1,
+    isCover: true,
+    rate: Number(account.daily_rate) || 0,
+    pageCapacity: 0,
+    linesStaked: 0,
+    linesRemaining: 0,
+    stakedAmount: 0,
+    status: "cover",
+    closedEarly: false,
+    overdrawn: false,
+    withdrawnOnPage: 0,
+    commissionTaken: 0,
+    balanceOnPage: 0,
+    payoutToCustomer: 0,
+    lines: [],
+  };
+}
+
 // GET /api/accounts/:accountId/card-simulate
 export const getAccountCardSimulation = async (req, res) => {
   const { accountId } = req.params;
@@ -298,11 +340,11 @@ export const getAccountCardSimulation = async (req, res) => {
     const ratePeriods = buildRatePeriods(rateHistoryRes.rows, currentRate);
     const { pages: rawPages, warnings } = simulateCard(txRes.rows, ratePeriods);
 
-    const pages = rawPages.length ? rawPages.map(finalizePage) : [];
+    let realPages = rawPages.length ? rawPages.map(finalizePage) : [];
 
-    if (pages.length === 0) {
+    if (realPages.length === 0) {
       // No transactions yet — show one empty page at the current rate.
-      pages.push(
+      realPages.push(
         finalizePage({
           pageNumber: 1,
           rate: currentRate,
@@ -319,17 +361,21 @@ export const getAccountCardSimulation = async (req, res) => {
       );
     }
 
+    // Real staking pages are numbered starting at 2 — page 1 is the cover.
+    realPages = realPages.map((p, idx) => ({ ...p, pageNumber: idx + 2 }));
+    const pages = [buildCoverPage(account), ...realPages];
+
     const totalDeposited = round2(
       txRes.rows.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount), 0)
     );
     const totalWithdrawn = round2(
       txRes.rows.filter((t) => t.type === "withdrawal").reduce((s, t) => s + Number(t.amount), 0)
     );
-    const completedPages = pages.filter((p) => p.status === "completed").length;
-    const totalCommissionEarned = round2(pages.reduce((s, p) => s + p.commissionTaken, 0));
-    const totalPaidToCustomer = round2(pages.reduce((s, p) => s + p.payoutToCustomer, 0));
+    const completedPages = realPages.filter((p) => p.status === "completed").length;
+    const totalCommissionEarned = round2(realPages.reduce((s, p) => s + p.commissionTaken, 0));
+    const totalPaidToCustomer = round2(realPages.reduce((s, p) => s + p.payoutToCustomer, 0));
 
-    const firstOpenIndex = pages.findIndex((p) => p.status !== "completed");
+    const firstOpenIndex = pages.findIndex((p) => !p.isCover && p.status !== "completed");
     const currentPage = firstOpenIndex >= 0 ? firstOpenIndex + 1 : pages.length;
 
     return res.status(200).json({
