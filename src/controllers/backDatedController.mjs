@@ -450,15 +450,15 @@ export const approveBackdatedTransaction = async (req, res) => {
       const jeInsert = await client.query(
         `INSERT INTO journal_entries
            (company_id, reference_no, description, entry_date,
-            source, source_id, source_table, period_id,
+            source, source_id, source_table,
             status, created_by, posted_by, posted_at)
-         VALUES ($1,$2,$3,$4,'customer_withdrawal',$5,'transactions', 'posted',$7,$7,NOW())
+         VALUES ($1,$2,$3,$4,'customer_withdrawal',$5,'transactions', 'posted',$6,$7,NOW())
          RETURNING id`,
         [
           companyId, ref,
           tx.description || `Backdated withdrawal — ${tx.account_type}`,
           entryDate,
-          tx.id, approved_by,
+          tx.id, approved_by, approved_by
         ]
       );
       newJeId = jeInsert.rows[0].id;
