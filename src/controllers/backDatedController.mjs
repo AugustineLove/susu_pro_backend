@@ -585,7 +585,7 @@ export const rejectBackdatedTransaction = async (req, res) => {
            approved_at = NOW()
        WHERE id = $3
        RETURNING *`,
-      [reason || null, rejected_by, transactionId]
+      [reason || '', rejected_by, transactionId]
     );
 
     await client.query("COMMIT");
