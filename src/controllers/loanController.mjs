@@ -885,12 +885,12 @@ export const getLoans = async (req, res) => {
     values.push(company_id);
 
     // Exclude internal group member records
-    conditions.push(`
-      (
-        l.loantype != 'group_member'
-        OR l.is_group_leader = true
-      )
-    `);
+    // conditions.push(`
+    //   (
+    //     l.loantype != 'group_member'
+    //     OR l.is_group_leader = true
+    //   )
+    // `);
 
     // Optional filters
     if (type) {
