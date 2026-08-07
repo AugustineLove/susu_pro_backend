@@ -21,7 +21,7 @@ export const sendCustomerMessage = async (req, res) => {
         data : data
         };
 
-    if(messageFrom === 'BigGod Susu'){
+    if(messageFrom === 'BigGod Susu' || messageFrom === 'FirstChoice'){
       axios(config)
     .then(function (response) {
     console.log(JSON.stringify(response.data));
@@ -51,7 +51,7 @@ export const sendCustomerMessageBackend = async (messageTo, messageFrom, message
         data : data
         };
 
-    if(messageFrom === 'BigGod Susu'){
+    if(messageFrom === 'BigGod Susu' || messageFrom === 'FirstChoice'){
       axios(config)
     .then(function (response) {
     console.log(JSON.stringify(response.data));
