@@ -856,7 +856,7 @@ export const getLoans = async (req, res) => {
       type,
       status,
       page = 1,
-      limit = 20,
+      limit = 22,
     } = req.query;
      console.log(req.body)
     // ─────────────────────────────────────────────
@@ -864,7 +864,7 @@ export const getLoans = async (req, res) => {
     // ─────────────────────────────────────────────
     if (!company_id) {
       return res.status(400).json({
-        status: "fail",
+        status: "fail", 
         message: "company_id is required",
       });
     }
