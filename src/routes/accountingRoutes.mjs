@@ -20,6 +20,7 @@ import {
   createPeriod,
   closePeriod,
 } from "../controllers/accountingController.mjs";
+import { getTellerFloatBalance, getTellerFloatHistory } from "../controllers/tellerFloatController.mjs";
 
 const accountingRoutes = express.Router({ mergeParams: true });
 // All routes are mounted at /api/accounting/:companyId/...
@@ -47,6 +48,11 @@ accountingRoutes.get("/reports/balance-sheet",  getBalanceSheet);
 accountingRoutes.get  ("/periods",             getPeriods);
 accountingRoutes.post ("/periods",             createPeriod);
 accountingRoutes.patch("/periods/:periodId/close", closePeriod);
+
+
+
+accountingRoutes.get("/tellers/:staffId/float", getTellerFloatBalance);
+accountingRoutes.get("/tellers/:staffId/float/history", getTellerFloatHistory);
 
 export default accountingRoutes;
 
