@@ -72,6 +72,9 @@ export const getAllCompanies = async (req, res) => {
 };
 
 
+const DEPOSIT_LIABILITY_CODES = ['2010-01', '2010-03']; // savings/susu, fixed deposit
+const COMMISSION_INCOME_CODE  = '4020';
+
 export const getCompanyStats = async (req, res) => {
   try {
     const companyId =
@@ -81,9 +84,9 @@ export const getCompanyStats = async (req, res) => {
     // 1️⃣ Customers count
     // ---------------------------
     const customerQuery = `
-      SELECT COUNT(*) 
-      FROM customers 
-      WHERE company_id = $1 
+      SELECT COUNT(*)
+      FROM customers
+      WHERE company_id = $1
         AND is_deleted = false
     `;
 
@@ -91,100 +94,106 @@ export const getCompanyStats = async (req, res) => {
     // 2️⃣ Transactions count
     // ---------------------------
     const transactionCountQuery = `
-      SELECT COUNT(*) 
-      FROM transactions 
-      WHERE company_id = $1
-        AND is_deleted = false
-    `;
-
-    // ---------------------------
-    // 3️⃣ Account Balance (Savings / Susu only)
-    // ---------------------------
-    const balanceQuery = `
-      SELECT COALESCE(SUM(balance), 0) AS total_balance
-      FROM accounts
-      WHERE company_id = $1
-        AND account_type NOT ILIKE '%loan%'
-        AND is_deleted = false
-    `;
-
-    // ---------------------------
-    // 4️⃣ Transaction Totals (Deposits & Withdrawals)
-    // ---------------------------
-    const totalsQuery = `
-      SELECT
-
-        -- Deposits
-        COALESCE(SUM(
-          CASE 
-            WHEN type = 'deposit'
-              AND status <> 'reversed'
-              AND is_deleted = false
-            THEN amount ELSE 0
-          END
-        ), 0) AS total_deposits,
-
-        COALESCE(SUM(
-          CASE 
-            WHEN type = 'deposit'
-              AND status = 'approved'
-              AND is_deleted = false
-            THEN amount ELSE 0
-          END
-        ), 0) AS total_approved_deposits,
-
-        COALESCE(SUM(
-          CASE 
-            WHEN type = 'deposit'
-              AND status = 'pending'
-              AND is_deleted = false
-            THEN amount ELSE 0
-          END
-        ), 0) AS total_pending_deposits,
-
-
-        -- Withdrawals
-        COALESCE(SUM(
-          CASE 
-            WHEN type = 'withdrawal'
-              AND status <> 'reversed'
-              AND is_deleted = false
-            THEN amount ELSE 0
-          END
-        ), 0) AS total_withdrawals,
-
-        COALESCE(SUM(
-          CASE 
-            WHEN type = 'withdrawal'
-              AND status = 'approved'
-              AND is_deleted = false
-            THEN amount ELSE 0
-          END
-        ), 0) AS total_approved_withdrawals,
-
-        COALESCE(SUM(
-          CASE 
-            WHEN type = 'withdrawal'
-              AND status = 'pending'
-              AND is_deleted = false
-            THEN amount ELSE 0
-          END
-        ), 0) AS total_pending_withdrawals
-
-
+      SELECT COUNT(*)
       FROM transactions
       WHERE company_id = $1
+        AND is_deleted = false
     `;
 
     // ---------------------------
-    // 5️⃣ Commissions
+    // 3️⃣ Pending withdrawals
+    // ---------------------------
+    // These haven't been approved yet, which means no journal entry has
+    // been posted for them (see stakeMoney / approveTransaction) — there
+    // is nothing in the ledger to reconcile against, so this is the one
+    // figure that legitimately stays sourced from the transactions table.
+    const pendingWithdrawalsQuery = `
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM transactions
+      WHERE company_id = $1
+        AND type = 'withdrawal'
+        AND status = 'pending'
+        AND is_deleted = false
+    `;
+
+    // ---------------------------
+    // 4️⃣ Customer balance (deposits liability)
+    // ---------------------------
+    // Same posted-only correlated-subquery pattern as getChartOfAccounts /
+    // getTrialBalance — this IS the accounting module's own number, not a
+    // re-derivation of it.
+    const balanceQuery = `
+      SELECT COALESCE(SUM(
+        CASE coa.normal_balance
+          WHEN 'credit' THEN
+            COALESCE((
+              SELECT SUM(jel.amount) FROM journal_entry_lines jel
+              JOIN journal_entries je ON je.id = jel.journal_entry_id
+              WHERE jel.coa_id = coa.id AND je.status = 'posted' AND je.company_id = $1
+                AND jel.debit_credit = 'credit'
+            ), 0)
+            -
+            COALESCE((
+              SELECT SUM(jel.amount) FROM journal_entry_lines jel
+              JOIN journal_entries je ON je.id = jel.journal_entry_id
+              WHERE jel.coa_id = coa.id AND je.status = 'posted' AND je.company_id = $1
+                AND jel.debit_credit = 'debit'
+            ), 0)
+          ELSE 0
+        END
+      ), 0) AS total_balance
+      FROM chart_of_accounts coa
+      WHERE coa.company_id = $1
+        AND coa.code = ANY($2::text[])
+        AND coa.is_deleted = false
+    `;
+
+    // ---------------------------
+    // 5️⃣ Total deposits (posted only)
+    // ---------------------------
+    // Credit side of the deposit-liability account, from deposit journal
+    // entries specifically — excludes pending/draft and excludes
+    // commission/withdrawal lines that touch the same liability account.
+    const depositsQuery = `
+      SELECT COALESCE(SUM(jel.amount), 0) AS total
+      FROM journal_entry_lines jel
+      JOIN journal_entries je   ON je.id = jel.journal_entry_id
+      JOIN chart_of_accounts coa ON coa.id = jel.coa_id
+      WHERE je.company_id = $1
+        AND je.status = 'posted'
+        AND je.source = 'customer_deposit'
+        AND jel.debit_credit = 'credit'
+        AND coa.code = ANY($2::text[])
+    `;
+
+    // ---------------------------
+    // 6️⃣ Total approved withdrawals (posted only)
+    // ---------------------------
+    const withdrawalsQuery = `
+      SELECT COALESCE(SUM(jel.amount), 0) AS total
+      FROM journal_entry_lines jel
+      JOIN journal_entries je   ON je.id = jel.journal_entry_id
+      JOIN chart_of_accounts coa ON coa.id = jel.coa_id
+      WHERE je.company_id = $1
+        AND je.status = 'posted'
+        AND je.source = 'customer_withdrawal'
+        AND jel.debit_credit = 'debit'
+        AND coa.code = ANY($2::text[])
+    `;
+
+    // ---------------------------
+    // 7️⃣ Total commissions (posted only)
     // ---------------------------
     const commissionQuery = `
-      SELECT 
-        COALESCE(SUM(amount), 0) AS total_commissions
-      FROM commissions
-      WHERE company_id = $1
-        AND (status IS NULL OR status <> 'reversed')
+      SELECT COALESCE(SUM(jel.amount), 0) AS total
+      FROM journal_entry_lines jel
+      JOIN journal_entries je   ON je.id = jel.journal_entry_id
+      JOIN chart_of_accounts coa ON coa.id = jel.coa_id
+      WHERE je.company_id = $1
+        AND je.status = 'posted'
+        AND je.source = 'commission'
+        AND jel.debit_credit = 'credit'
+        AND coa.code = $2
     `;
 
     // ---------------------------
@@ -192,16 +201,20 @@ export const getCompanyStats = async (req, res) => {
     // ---------------------------
     const [
       { rows: customers },
-      { rows: transactions },
+      { rows: transactionsCount },
+      { rows: pendingW },
       { rows: balances },
-      { rows: totals },
-      { rows: commissions }
+      { rows: deposits },
+      { rows: withdrawals },
+      { rows: commissions },
     ] = await Promise.all([
       pool.query(customerQuery, [companyId]),
       pool.query(transactionCountQuery, [companyId]),
-      pool.query(balanceQuery, [companyId]),
-      pool.query(totalsQuery, [companyId]),
-      pool.query(commissionQuery, [companyId])
+      pool.query(pendingWithdrawalsQuery, [companyId]),
+      pool.query(balanceQuery, [companyId, DEPOSIT_LIABILITY_CODES]),
+      pool.query(depositsQuery, [companyId, DEPOSIT_LIABILITY_CODES]),
+      pool.query(withdrawalsQuery, [companyId, DEPOSIT_LIABILITY_CODES]),
+      pool.query(commissionQuery, [companyId, COMMISSION_INCOME_CODE]),
     ]);
 
     // ---------------------------
@@ -211,19 +224,15 @@ export const getCompanyStats = async (req, res) => {
       status: "success",
       data: {
         totalCustomers: parseInt(customers[0].count, 10),
-        totalTransactions: parseInt(transactions[0].count, 10),
+        totalTransactions: parseInt(transactionsCount[0].count, 10),
 
         totalBalance: parseFloat(balances[0].total_balance),
 
-        totalDeposits: parseFloat(totals[0].total_deposits),
-        totalApprovedDeposits: parseFloat(totals[0].total_approved_deposits),
-        totalPendingDeposits: parseFloat(totals[0].total_pending_deposits),
+        totalDeposits: parseFloat(deposits[0].total),
+        totalApprovedWithdrawals: parseFloat(withdrawals[0].total),
+        totalPendingWithdrawals: parseFloat(pendingW[0].total),
 
-        totalWithdrawals: parseFloat(totals[0].total_withdrawals),
-        totalApprovedWithdrawals: parseFloat(totals[0].total_approved_withdrawals),
-        totalPendingWithdrawals: parseFloat(totals[0].total_pending_withdrawals),
-
-        totalCommissions: parseFloat(commissions[0].total_commissions)
+        totalCommissions: parseFloat(commissions[0].total),
       }
     });
 
@@ -235,6 +244,7 @@ export const getCompanyStats = async (req, res) => {
     });
   }
 };
+
 export const updateProfile = async (req, res) => {
   const {
     id,         // or email if you want to use that as identifier
