@@ -3,30 +3,34 @@ import pool from "../db.mjs";
 // ─────────────────────────────────────────────────────────────────────────
 // TELLER FLOAT — balance + history
 //
-// TODAY'S MODEL (matches how approveTransaction already validates float):
-//   Every teller shares ONE chart_of_accounts row, code "1010-02"
-//   ("Cash — Teller"). Deposits DEBIT it (cash comes in), withdrawal
-//   approvals CREDIT it (cash goes out). Every line is stamped with
-//   staff_id — so a specific teller's float is simply the running
-//   balance of the lines THEY posted against that shared account.
+// TODAY'S MODEL: every teller shares ONE chart_of_accounts row, code
+// "1010-02" ("Cash — Teller"). Deposits DEBIT it (cash comes in),
+// withdrawal approvals CREDIT it (cash goes out). Because it's a single
+// physical till, the account balance itself IS the float — we do NOT
+// filter by staff_id. staff_id on journal_entry_lines is stamped
+// inconsistently depending on which code path posted the line (creator
+// vs. approver vs. whoever reversed it, and commission lines carry none
+// at all) — it's fine as an audit trail field, but it's not a reliable
+// way to isolate "this teller's" slice of a shared drawer. Filtering on
+// it silently drops lines and makes the balance disagree with the real
+// account total, which is what you were seeing.
 //
-// SCALING PATH (no rewrite needed later):
-//   When you're ready to give each teller a physically separate float
-//   account (own COA row under a "Teller Floats" parent, own opening
-//   balance, own shift open/close), create the `teller_float_accounts`
-//   table (see migrations/002_teller_float_accounts.sql) and insert one
-//   active row per teller. resolveTellerFloatCoa() below already checks
-//   for that row first — nothing else in this file has to change, and
-//   the shared-account code path becomes the fallback for tellers who
-//   haven't been migrated yet.
+// SCALING PATH:
+//   True per-teller isolation requires a physically separate till, i.e.
+//   its own chart_of_accounts row. When you're ready for a second
+//   teller, create the `teller_float_accounts` table (see
+//   migrations/002_teller_float_accounts.sql) and provision one active
+//   row per teller. resolveTellerFloatCoa() below already checks for
+//   that row first and, when found, resolves straight to that teller's
+//   own coa_id — no staff_id filtering needed there either, since the
+//   account itself is already isolated. The shared "1010-02" account
+//   remains the fallback for any teller who hasn't been migrated yet.
 // ─────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_TELLER_FLOAT_COA_CODE = "1010-02";
 
 /**
- * Resolves which chart_of_accounts row represents this teller's float,
- * and whether results still need to be scoped by staff_id (true whenever
- * the account is shared rather than dedicated to this teller).
+ * Resolves which chart_of_accounts row represents this teller's float.
  */
 async function resolveTellerFloatCoa(companyId, staffId) {
   // 1. Prefer a dedicated per-teller float account, if provisioned.
@@ -47,10 +51,11 @@ async function resolveTellerFloatCoa(companyId, staffId) {
   }
 
   if (dedicated.rowCount > 0) {
-    return { ...dedicated.rows[0], scopedToStaff: false };
+    return dedicated.rows[0];
   }
 
-  // 2. Fall back to the shared float account, scoped by staff_id per line.
+  // 2. Fall back to the shared float account — the whole account balance
+  //    is the float, no staff_id filtering (see note above).
   const shared = await pool.query(
     `SELECT id, code, name, normal_balance
      FROM chart_of_accounts
@@ -66,7 +71,7 @@ async function resolveTellerFloatCoa(companyId, staffId) {
     );
   }
 
-  return { ...shared.rows[0], scopedToStaff: true };
+  return shared.rows[0];
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -78,10 +83,6 @@ export const getTellerFloatBalance = async (req, res) => {
 
   try {
     const floatCoa = await resolveTellerFloatCoa(companyId, staffId);
-    const staffFilterSql = floatCoa.scopedToStaff ? "AND jel.staff_id = $3" : "";
-    const params = floatCoa.scopedToStaff
-      ? [companyId, floatCoa.id, staffId]
-      : [companyId, floatCoa.id];
 
     const result = await pool.query(
       `SELECT
@@ -113,14 +114,13 @@ export const getTellerFloatBalance = async (req, res) => {
        FROM chart_of_accounts coa
        LEFT JOIN journal_entry_lines jel
          ON jel.coa_id = coa.id
-         ${staffFilterSql}
        LEFT JOIN journal_entries je
          ON je.id = jel.journal_entry_id
          AND je.status = 'posted'
          AND je.company_id = $1
        WHERE coa.id = $2
        GROUP BY coa.id`,
-      params
+      [companyId, floatCoa.id]
     );
 
     const staffRes = await pool.query(
@@ -138,7 +138,6 @@ export const getTellerFloatBalance = async (req, res) => {
         coa_id: row.coa_id,
         coa_code: row.coa_code,
         coa_name: row.coa_name,
-        scoped_to_staff: floatCoa.scopedToStaff,
         balance: Number(row.balance),
         todays_cash_in: Number(row.todays_cash_in),
         todays_cash_out: Number(row.todays_cash_out),
@@ -180,11 +179,6 @@ export const getTellerFloatHistory = async (req, res) => {
     ];
     const values = [companyId, floatCoa.id];
     let pi = 3;
-
-    if (floatCoa.scopedToStaff) {
-      conditions.push(`jel.staff_id = $${pi++}`);
-      values.push(staffId);
-    }
 
     if (type && type !== "all") {
       conditions.push(`t.type = $${pi++}`);
@@ -274,7 +268,6 @@ export const getTellerFloatHistory = async (req, res) => {
       limit,
       total,
       totalPages: Math.ceil(total / limit),
-      scoped_to_staff: floatCoa.scopedToStaff,
       coa: { id: floatCoa.id, code: floatCoa.code, name: floatCoa.name },
       data: result.rows,
     });
