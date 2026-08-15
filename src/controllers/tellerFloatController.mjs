@@ -91,35 +91,65 @@ export const getTellerFloatBalance = async (req, res) => {
          coa.name AS coa_name,
          coa.normal_balance,
 
-         CASE coa.normal_balance
-           WHEN 'debit' THEN
-             COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0) -
-             COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0)
-           WHEN 'credit' THEN
-             COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0) -
-             COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0)
-         END AS balance,
+         COALESCE((
+           SELECT CASE coa.normal_balance
+             WHEN 'debit' THEN
+               COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0) -
+               COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0)
+             WHEN 'credit' THEN
+               COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'credit'), 0) -
+               COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit = 'debit'),  0)
+           END
+           FROM journal_entry_lines jel
+           JOIN journal_entries je ON je.id = jel.journal_entry_id
+           WHERE jel.coa_id = coa.id
+             AND je.status = 'posted'
+             AND je.company_id = $1
+         ), 0) AS balance,
 
-         COALESCE(SUM(jel.amount) FILTER (
-           WHERE jel.debit_credit = 'debit' AND je.entry_date = CURRENT_DATE
+         COALESCE((
+           SELECT SUM(jel.amount)
+           FROM journal_entry_lines jel
+           JOIN journal_entries je ON je.id = jel.journal_entry_id
+           WHERE jel.coa_id = coa.id
+             AND je.status = 'posted'
+             AND je.company_id = $1
+             AND jel.debit_credit = 'debit'
+             AND je.entry_date = CURRENT_DATE
          ), 0) AS todays_cash_in,
 
-         COALESCE(SUM(jel.amount) FILTER (
-           WHERE jel.debit_credit = 'credit' AND je.entry_date = CURRENT_DATE
+         COALESCE((
+           SELECT SUM(jel.amount)
+           FROM journal_entry_lines jel
+           JOIN journal_entries je ON je.id = jel.journal_entry_id
+           WHERE jel.coa_id = coa.id
+             AND je.status = 'posted'
+             AND je.company_id = $1
+             AND jel.debit_credit = 'credit'
+             AND je.entry_date = CURRENT_DATE
          ), 0) AS todays_cash_out,
 
-         COUNT(jel.id) FILTER (WHERE je.entry_date = CURRENT_DATE) AS todays_transaction_count,
-         MAX(je.entry_date) AS last_movement_date
+         COALESCE((
+           SELECT COUNT(*)
+           FROM journal_entry_lines jel
+           JOIN journal_entries je ON je.id = jel.journal_entry_id
+           WHERE jel.coa_id = coa.id
+             AND je.status = 'posted'
+             AND je.company_id = $1
+             AND je.entry_date = CURRENT_DATE
+         ), 0) AS todays_transaction_count,
+
+         (
+           SELECT MAX(je.entry_date)
+           FROM journal_entry_lines jel
+           JOIN journal_entries je ON je.id = jel.journal_entry_id
+           WHERE jel.coa_id = coa.id
+             AND je.status = 'posted'
+             AND je.company_id = $1
+         ) AS last_movement_date
 
        FROM chart_of_accounts coa
-       LEFT JOIN journal_entry_lines jel
-         ON jel.coa_id = coa.id
-       LEFT JOIN journal_entries je
-         ON je.id = jel.journal_entry_id
-         AND je.status = 'posted'
-         AND je.company_id = $1
-       WHERE coa.id = $2
-       GROUP BY coa.id`,
+       WHERE coa.id = $2`,
       [companyId, floatCoa.id]
     );
 
