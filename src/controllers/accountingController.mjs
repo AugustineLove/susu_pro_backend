@@ -846,3 +846,143 @@ export const closePeriod = async (req, res) => {
     return res.status(500).json({ status: "error", message: err.message });
   }
 };
+
+
+const CFS_SECTION = {
+  accounts_receivable: "operating",
+  other_receivables:   "operating",
+  other_assets:         "operating",
+  customer_deposits:    "operating", // core to a susu business, treated like bank deposits
+  accounts_payable:     "operating",
+  accrued_liabilities:  "operating",
+  other_liabilities:    "operating",
+  fixed_assets:          "investing",
+  loans_payable:         "financing",
+  share_capital:         "financing",
+  retained_earnings:     "financing",
+};
+
+export const getCashFlowStatement = async (req, res) => {
+  const { companyId } = req.params;
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate)
+    return res.status(400).json({ status: "fail", message: "startDate and endDate are required" });
+
+  const CASH_CATEGORIES = ["cash_and_cash_equivalents", "bank_accounts"];
+
+  const balanceQuery = `
+    SELECT coa.id, coa.code, coa.name, coa.category, coa.account_type, coa.normal_balance,
+      COALESCE((
+        SELECT CASE coa.normal_balance
+          WHEN 'debit' THEN
+            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='debit'),0) -
+            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='credit'),0)
+          WHEN 'credit' THEN
+            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='credit'),0) -
+            COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='debit'),0)
+        END
+        FROM journal_entry_lines jel
+        JOIN journal_entries je ON je.id = jel.journal_entry_id
+        WHERE jel.coa_id = coa.id AND je.status = 'posted' AND je.company_id = $1
+          AND je.entry_date <= $2
+      ), 0) AS balance
+    FROM chart_of_accounts coa
+    WHERE coa.company_id = $1 AND coa.is_deleted = false
+      AND coa.account_type IN ('asset','liability','equity')`;
+
+  try {
+    const dayBefore = new Date(startDate);
+    dayBefore.setDate(dayBefore.getDate() - 1);
+    const beginDate = dayBefore.toISOString().slice(0, 10);
+
+    const [beginRes, endRes, plRes, depRes] = await Promise.all([
+      pool.query(balanceQuery, [companyId, beginDate]),
+      pool.query(balanceQuery, [companyId, endDate]),
+      pool.query(
+        `SELECT coa.account_type,
+           CASE coa.normal_balance
+             WHEN 'credit' THEN COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='credit'),0) - COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='debit'),0)
+             WHEN 'debit'  THEN COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='debit'),0)  - COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='credit'),0)
+           END AS amount
+         FROM chart_of_accounts coa
+         LEFT JOIN journal_entry_lines jel ON jel.coa_id = coa.id
+         LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id
+           AND je.status = 'posted' AND je.company_id = $1
+           AND je.entry_date BETWEEN $2 AND $3
+         WHERE coa.company_id = $1 AND coa.account_type IN ('income','expense')
+           AND coa.is_active = true AND coa.is_deleted = false
+         GROUP BY coa.id, coa.account_type`,
+        [companyId, startDate, endDate]
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='debit'),0) -
+                COALESCE(SUM(jel.amount) FILTER (WHERE jel.debit_credit='credit'),0) AS amount
+         FROM journal_entry_lines jel
+         JOIN journal_entries je ON je.id = jel.journal_entry_id
+         JOIN chart_of_accounts coa ON coa.id = jel.coa_id
+         WHERE je.company_id = $1 AND je.status = 'posted'
+           AND je.entry_date BETWEEN $2 AND $3
+           AND coa.category = 'depreciation_expense'`,
+        [companyId, startDate, endDate]
+      ),
+    ]);
+
+    const beginMap = new Map(beginRes.rows.map(r => [r.id, r]));
+    const endMap   = new Map(endRes.rows.map(r => [r.id, r]));
+
+    const totalIncome   = plRes.rows.filter(r => r.account_type === "income").reduce((s, r) => s + Number(r.amount), 0);
+    const totalExpenses = plRes.rows.filter(r => r.account_type === "expense").reduce((s, r) => s + Number(r.amount), 0);
+    const netIncome     = totalIncome - totalExpenses;
+    const depreciation  = Number(depRes.rows[0]?.amount || 0);
+
+    const sections = { operating: [], investing: [], financing: [] };
+    let cashBegin = 0, cashEnd = 0;
+
+    for (const [id, endAcc] of endMap) {
+      const beginAcc = beginMap.get(id) || { balance: 0 };
+      const change = Number(endAcc.balance) - Number(beginAcc.balance);
+
+      if (CASH_CATEGORIES.includes(endAcc.category)) {
+        cashBegin += Number(beginAcc.balance);
+        cashEnd   += Number(endAcc.balance);
+        continue;
+      }
+      if (endAcc.category === "accumulated_depreciation") continue; // covered by add-back
+      if (endAcc.category === "current_year_profit") continue;      // covered by net income
+
+      const section = CFS_SECTION[endAcc.category];
+      if (!section) continue;
+
+      const isAsset = endAcc.account_type === "asset";
+      const cashImpact = isAsset ? -change : change; // asset ↑ = cash out, liability/equity ↑ = cash in
+
+      if (Math.abs(cashImpact) > 0.005) {
+        sections[section].push({ code: endAcc.code, name: endAcc.name, category: endAcc.category, amount: cashImpact });
+      }
+    }
+
+    const operatingTotal = netIncome + depreciation + sections.operating.reduce((s, r) => s + r.amount, 0);
+    const investingTotal = sections.investing.reduce((s, r) => s + r.amount, 0);
+    const financingTotal = sections.financing.reduce((s, r) => s + r.amount, 0);
+    const netCashFlow    = operatingTotal + investingTotal + financingTotal;
+    const impliedCashEnd = cashBegin + netCashFlow;
+
+    return res.json({
+      status: "success",
+      data: {
+        operating: { netIncome, depreciation, adjustments: sections.operating, total: operatingTotal },
+        investing: { items: sections.investing, total: investingTotal },
+        financing: { items: sections.financing, total: financingTotal },
+      },
+      summary: {
+        netCashFlow, cashBegin, cashEnd, impliedCashEnd,
+        reconciles: Math.abs(impliedCashEnd - cashEnd) < 1,
+        variance: cashEnd - impliedCashEnd,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ status: "error", message: err.message });
+  }
+};

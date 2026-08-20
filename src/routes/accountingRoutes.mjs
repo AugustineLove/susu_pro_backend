@@ -19,6 +19,7 @@ import {
   getPeriods,
   createPeriod,
   closePeriod,
+  getCashFlowStatement,
 } from "../controllers/accountingController.mjs";
 import { getTellerFloatBalance, getTellerFloatHistory } from "../controllers/tellerFloatController.mjs";
 
@@ -49,7 +50,7 @@ accountingRoutes.get  ("/periods",             getPeriods);
 accountingRoutes.post ("/periods",             createPeriod);
 accountingRoutes.patch("/periods/:periodId/close", closePeriod);
 
-
+accountingRoutes.get("/reports/cash-flow", getCashFlowStatement);
 
 accountingRoutes.get("/tellers/:staffId/float", getTellerFloatBalance);
 accountingRoutes.get("/tellers/:staffId/float/history", getTellerFloatHistory);
