@@ -852,7 +852,7 @@ const CFS_SECTION = {
   accounts_receivable: "operating",
   other_receivables:   "operating",
   other_assets:         "operating",
-  customer_deposits:    "operating", // core to a susu business, treated like bank deposits
+  customer_deposits:    "operating", 
   accounts_payable:     "operating",
   accrued_liabilities:  "operating",
   other_liabilities:    "operating",
