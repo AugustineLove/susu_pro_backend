@@ -164,6 +164,7 @@ export const getCompanyTransactions = async (req, res) => {
     });
   }
 };
+
 export const getRecentTransactions = async (req, res) => {
   try {
     const { company_id } = req.params;
@@ -234,10 +235,6 @@ export const getRecentTransactions = async (req, res) => {
 
     // Determine if searching/filtering
     const isSearching = !!(
-      search ||
-      (type && type !== "all") ||
-      (status && status !== "all") ||
-      (staff && staff !== "all") ||
       startDate ||
       endDate
     );
