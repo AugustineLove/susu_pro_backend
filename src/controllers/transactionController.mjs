@@ -1941,11 +1941,19 @@ export const approveBackdatedTransaction = async (req, res) => {
 export const getDailyCollections = async (req, res) => {
   const { company_id } = req.params;
   const { date } = req.query;
+  const staff_id = req.user?.id || req.staff?.id; // Get the logged-in staff ID from auth middleware
 
   if (!date) {
     return res.status(400).json({
       status: 'fail',
       message: 'Date is required',
+    });
+  }
+
+  if (!staff_id) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Staff ID not found. Please log in again.',
     });
   }
 
@@ -2000,10 +2008,11 @@ export const getDailyCollections = async (req, res) => {
         AND t.is_deleted = false
         AND t.type != 'withdrawal'
         AND t.status = 'completed'
+        AND t.created_by = $4  -- Only fetch transactions created by this staff member
 
       ORDER BY t.transaction_date DESC
       `,
-      [company_id, startDate.toISOString(), endDate.toISOString()]
+      [company_id, startDate.toISOString(), endDate.toISOString(), staff_id]
     );
 
     // Calculate summary stats
@@ -2022,7 +2031,7 @@ export const getDailyCollections = async (req, res) => {
       return acc;
     }, {});
 
-    // Group by mobile banker
+    // Group by mobile banker (should all be the same since we filter by staff)
     const byBanker = transactions.reduce((acc, tx) => {
       const banker = tx.mobile_banker_name || 'Unassigned';
       if (!acc[banker]) {
@@ -2036,6 +2045,7 @@ export const getDailyCollections = async (req, res) => {
     res.status(200).json({
       status: 'success',
       date,
+      staff_id,
       summary: {
         totalAmount,
         totalCount,
