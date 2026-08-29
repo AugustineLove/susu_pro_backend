@@ -14,7 +14,7 @@ transactionRouter.post('/bulk', bulkStakeMoney);
 transactionRouter.post('/transfer-money', transferBetweenAccounts);
 // In your routes file (e.g., transactionRoutes.mjs)
 transactionRouter.get(
-  '/company/:company_id/daily-collections',
+  '/company/:company_id/:staff_id/daily-collections',
   getDailyCollections
 );
 
