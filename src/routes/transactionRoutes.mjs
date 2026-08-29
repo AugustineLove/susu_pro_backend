@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { deductCommission, stakeMoney } from "../controllers/stakeController.mjs";
-import { approveTransaction, deleteTransaction, getCompanyTransactions, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction, reverseWithdrawal, transferBetweenAccounts } from "../controllers/transactionController.mjs";
+import { approveTransaction, deleteTransaction, getCompanyTransactions, getDailyCollections, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction, reverseWithdrawal, transferBetweenAccounts } from "../controllers/transactionController.mjs";
 import { getWithdrawals } from "../controllers/withdrawalController.mjs";
 import { bulkStakeMoney } from "../controllers/bulkTransactions.mjs";
 import { checkDayNotClosed } from "../middlewares/checkDayNotClosed.mjs";
@@ -12,6 +12,11 @@ export const transactionRouter = Router();
 transactionRouter.post('/stake', checkDayNotClosed, stakeMoney);
 transactionRouter.post('/bulk', bulkStakeMoney);
 transactionRouter.post('/transfer-money', transferBetweenAccounts);
+// In your routes file (e.g., transactionRoutes.mjs)
+transactionRouter.get(
+  '/company/:company_id/daily-collections',
+  getDailyCollections
+);
 
 // Queries
 transactionRouter.get('/staff/:staff_id', getTransactionsByStaff);

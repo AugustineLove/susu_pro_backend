@@ -1937,3 +1937,120 @@ export const approveBackdatedTransaction = async (req, res) => {
     client.release();
   }
 };
+
+export const getDailyCollections = async (req, res) => {
+  const { company_id } = req.params;
+  const { date } = req.query;
+
+  if (!date) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'Date is required',
+    });
+  }
+
+  try {
+    // Format date for query (start and end of day)
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+    
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+
+    const result = await pool.query(
+      `
+      SELECT 
+        t.id AS transaction_id,
+        t.amount,
+        t.type,
+        t.description,
+        t.status,
+        t.transaction_date,
+        t.payment_method,
+        t.unique_code,
+        t.reversed_at,
+        t.reversal_reason,
+        t.is_deleted,
+
+        a.id AS account_id,
+        a.account_number,
+        a.account_type,
+
+        c.id AS customer_id,
+        c.name AS customer_name,
+        c.phone_number AS customer_phone,
+
+        rs.id AS recorded_staff_id,
+        rs.full_name AS recorded_staff_name,
+
+        mb.id AS mobile_banker_id,
+        mb.full_name AS mobile_banker_name,
+
+        str.full_name AS reversed_by_name
+
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
+      JOIN customers c ON a.customer_id = c.id
+      LEFT JOIN staff rs ON t.staff_id = rs.id
+      LEFT JOIN staff mb ON t.created_by = mb.id
+      LEFT JOIN staff str ON t.reversed_by = str.id
+
+      WHERE t.company_id = $1
+        AND t.transaction_date BETWEEN $2 AND $3
+        AND t.is_deleted = false
+        AND t.type != 'withdrawal'
+        AND t.status = 'completed'
+
+      ORDER BY t.transaction_date DESC
+      `,
+      [company_id, startDate.toISOString(), endDate.toISOString()]
+    );
+
+    // Calculate summary stats
+    const transactions = result.rows;
+    const totalAmount = transactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
+    const totalCount = transactions.length;
+    
+    // Group by payment method
+    const byPaymentMethod = transactions.reduce((acc, tx) => {
+      const method = tx.payment_method || 'cash';
+      if (!acc[method]) {
+        acc[method] = { count: 0, total: 0 };
+      }
+      acc[method].count += 1;
+      acc[method].total += Number(tx.amount);
+      return acc;
+    }, {});
+
+    // Group by mobile banker
+    const byBanker = transactions.reduce((acc, tx) => {
+      const banker = tx.mobile_banker_name || 'Unassigned';
+      if (!acc[banker]) {
+        acc[banker] = { count: 0, total: 0 };
+      }
+      acc[banker].count += 1;
+      acc[banker].total += Number(tx.amount);
+      return acc;
+    }, {});
+
+    res.status(200).json({
+      status: 'success',
+      date,
+      summary: {
+        totalAmount,
+        totalCount,
+        averageAmount: totalCount > 0 ? totalAmount / totalCount : 0,
+        byPaymentMethod,
+        byBanker,
+      },
+      data: transactions,
+    });
+
+  } catch (error) {
+    console.error('Error fetching daily collections:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch daily collections',
+    });
+  }
+};
