@@ -1939,10 +1939,10 @@ export const approveBackdatedTransaction = async (req, res) => {
 };
 
 export const getDailyCollections = async (req, res) => {
-  const { company_id } = req.params;
+  const { company_id, staff_id } = req.params;
   const { date } = req.query;
-  const staff_id = req.user?.id || req.staff?.id; // Get the logged-in staff ID from auth middleware
-
+  console.log(`Company id: ${company_id}`)
+  console.log(`Staff id: ${staff_id}`)
   if (!date) {
     return res.status(400).json({
       status: 'fail',
@@ -1958,12 +1958,8 @@ export const getDailyCollections = async (req, res) => {
   }
 
   try {
-    // Format date for query (start and end of day)
-    const startDate = new Date(date);
-    startDate.setHours(0, 0, 0, 0);
-    
-    const endDate = new Date(date);
-    endDate.setHours(23, 59, 59, 999);
+     const startDate = new Date(`${date}T00:00:00.000Z`);
+    const endDate   = new Date(`${date}T23:59:59.999Z`);
 
     const result = await pool.query(
       `
@@ -2008,13 +2004,13 @@ export const getDailyCollections = async (req, res) => {
         AND t.is_deleted = false
         AND t.type != 'withdrawal'
         AND t.status = 'completed'
-        AND t.created_by = $4  -- Only fetch transactions created by this staff member
+        AND t.staff_id = $4 
 
       ORDER BY t.transaction_date DESC
       `,
       [company_id, startDate.toISOString(), endDate.toISOString(), staff_id]
     );
-
+    
     // Calculate summary stats
     const transactions = result.rows;
     const totalAmount = transactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
