@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.mjs';
 import companyRoutes from './companyRoutes.mjs';
 import { staffRoutes } from './staffRoutes.mjs';
+import { entryBatchRoute } from './entryBatchRoutes.mjs';
 import { customerRouter } from './customerRoutes.mjs';
 import { accountRouter } from './accountRoutes.mjs';
 import { transactionRouter } from './transactionRoutes.mjs';
@@ -46,6 +47,7 @@ allRoutes.use('/api/payroll/:companyId/', payRollRouter);
 allRoutes.use('/api/variance/:companyId/', cashVarianceRouter);
 allRoutes.use('/api/investments', investmentRouter);
 allRoutes.use('/api/charges', chargesRouter);
-allRoutes.use('/api/:companyId/accounting-rules', accountingRulesRouter)
+allRoutes.use('/api/:companyId/accounting-rules', accountingRulesRouter);
+allRoutes.use('/api/entry-batches', entryBatchRoute);
 
 export default allRoutes;
