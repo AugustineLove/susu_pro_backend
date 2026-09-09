@@ -5,15 +5,6 @@ import {
 } from "../services/accountingHelper.mjs";
 import { sendCustomerMessageBackend } from "./smsController.mjs";
 
-// ─────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Generates a numeric batch code: YYYYMMDD + 3-digit daily sequence
- * for the company, e.g. "20260909014". Retries on unique-violation
- * (23505) in case two sheets get created in the same instant.
- */
 async function generateBatchCode(client, companyId, entryDate) {
   const dateStr = entryDate.replace(/-/g, ""); // "2026-09-09" -> "20260909"
   const countRes = await client.query(
@@ -247,10 +238,7 @@ export const getBatchByCode = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────
-// PATCH /api/entry-batches/:code
-// Full replace of a pending sheet's rows/date/banker/notes.
-// Rejects if the sheet is no longer pending.
+
 // ─────────────────────────────────────────────────────────────
 export const updateEntryBatch = async (req, res) => {
   const { code } = req.params;
@@ -309,7 +297,7 @@ export const updateEntryBatch = async (req, res) => {
            (account_id, amount, type, status, processing_status,
             payment_method, created_by, company_id, description,
             unique_code, staff_id, withdrawal_type, transaction_date, batch_id)
-         VALUES ($1,$2,$3,'pending','awaiting_approval',$4,$5,$6,$7,'',$5,$8,$9,$10)`,
+         VALUES ($1,$2,$3,'pending','paid',$4,$5,$6,$7,'',$5,$8,$9,$10)`,
         [
           row.account_id, parseFloat(row.amount), row.transaction_type,
           row.payment_method || null, batch.entered_by_staff_id, batch.company_id,
