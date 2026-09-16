@@ -9,8 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET || '';
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
-
-    // 1. First, check if email belongs to a company
+    console.log('Login attempt for email:', email);
     let { rows } = await pool.query(
       'SELECT * FROM companies WHERE company_email = $1',
       [email]
@@ -18,7 +17,7 @@ export const loginUser = async (req, res) => {
 
     if (rows.length > 0) {
       const company = rows[0];
-
+å
       // Compare password
       const isMatch = await bcrypt.compare(password, company.password_hash);
       if (!isMatch) {

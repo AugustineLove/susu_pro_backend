@@ -480,7 +480,6 @@ export const approveEntryBatch = async (req, res) => {
     const entryDate = new Date(batch.entry_date).toISOString().slice(0, 10);
     const smsQueue = [];
 
-    // ── Apply each row: move balance, post JE, mark completed ─
     for (const row of rowsRes.rows) {
       const numericAmount = parseFloat(row.amount);
       const isLoan = row.account_type.toLowerCase().includes("loan");
