@@ -4,6 +4,12 @@ import pool from "../db.mjs";
 const PAGE_LINES = 31;
 const LEFT_LINES = 15;
 
+// Transaction types that behave like a "deposit" (money going onto the card)
+// vs a "withdrawal" (money coming off the card). Anything not in these sets
+// is ignored by the simulation entirely.
+const DEPOSIT_TYPES = new Set(["deposit", "transfer_in", "salary"]);
+const WITHDRAWAL_TYPES = new Set(["withdrawal", "transfer_out"]);
+
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // ── Rate timeline ────────────────────────────────────────────────────────
@@ -42,10 +48,11 @@ function getRateForDate(periods, date) {
 }
 
 // ── Core simulation ──────────────────────────────────────────────────────
-// Walks ALL transactions (deposits + withdrawals) in one true chronological
-// stream and builds up "pages" as living objects. This is what lets a
-// withdrawal correctly target the earliest still-open page while deposits
-// keep filling a later page independently.
+// Walks ALL transactions (deposits + withdrawals, plus transfer_in/salary as
+// deposit-equivalents and transfer_out as a withdrawal-equivalent) in one
+// true chronological stream and builds up "pages" as living objects. This is
+// what lets a withdrawal correctly target the earliest still-open page while
+// deposits keep filling a later page independently.
 //
 // Rate-change rule: a rate change never tears an in-progress page apart.
 // Each page's rate is fixed the moment the page is opened. When a deposit
@@ -101,7 +108,13 @@ function simulateCard(transactions, ratePeriods) {
     const amount = round2(Number(tx.amount));
     if (!amount || amount <= 0) continue;
 
-    if (tx.type === "deposit") {
+    const isDepositLike = DEPOSIT_TYPES.has(tx.type);
+    const isWithdrawalLike = WITHDRAWAL_TYPES.has(tx.type);
+
+    if (isDepositLike) {
+      // deposit, transfer_in, and salary all fund the card the exact same
+      // way — they're chunked and spread across pages/lines identically to
+      // a plain deposit.
       let remaining = amount;
       while (remaining > 0.0001) {
         let page = currentDepositPage();
@@ -138,12 +151,10 @@ function simulateCard(transactions, ratePeriods) {
           // defensive: force page rotation if something upstream left 0 space
           remaining = round2(remaining);
         }
-        // If remaining > 0, the loop repeats: currentDepositPage() will now
-        // return null (this page is full/completed), so a brand-new page
-        // opens at the rate in effect on tx.transaction_date — this is the
-        // one and only point where a rate change actually takes hold.
       }
-    } else if (tx.type === "withdrawal") {
+    } else if (isWithdrawalLike) {
+      // withdrawal and transfer_out both pull money off the card the exact
+      // same way — chunked against the earliest still-open page(s).
       let remaining = amount;
       let safety = 0;
 
@@ -152,9 +163,6 @@ function simulateCard(transactions, ratePeriods) {
         let page = earliestOpenPage();
         if (!page) page = openNewPage(rate, tx.transaction_date);
 
-        // Nothing meaningfully staked (not even one full line) — this page
-        // can't be closed out. Treat as an overdraft against it and stop,
-        // rather than looping forever.
         if (page.stakedAmount < page.rate - 0.0001) {
           page.withdrawnAmount = round2(page.withdrawnAmount + remaining);
           page.overdrawn = true;
@@ -165,10 +173,6 @@ function simulateCard(transactions, ratePeriods) {
           break;
         }
 
-        // Closure trigger: cash withdrawn reaches (staked − one line),
-        // i.e. everything except the commission line. Once a page is
-        // closed this way, anything left over from this withdrawal rolls
-        // automatically onto the next open page (loop continues).
         const closeThreshold = round2(page.stakedAmount - page.rate);
         const payableBeforeClose = round2(closeThreshold - page.withdrawnAmount);
         const payNow = round2(Math.min(remaining, Math.max(payableBeforeClose, 0)));
@@ -316,13 +320,15 @@ export const getAccountCardSimulation = async (req, res) => {
       });
     }
 
-    // Single chronologically-sorted stream of deposits + withdrawals.
+    // Single chronologically-sorted stream of everything that funds or
+    // draws down the card: deposit/transfer_in/salary all behave as
+    // deposits, and withdrawal/transfer_out both behave as withdrawals.
     const txRes = await pool.query(
       `SELECT amount, type, transaction_date
        FROM transactions
        WHERE account_id = $1
          AND is_deleted = false
-         AND type IN ('deposit', 'withdrawal')
+         AND type IN ('deposit', 'withdrawal', 'transfer_in', 'transfer_out', 'salary')
          AND status IN ('approved', 'completed')
        ORDER BY transaction_date ASC, created_at ASC`,
       [accountId]
@@ -365,11 +371,17 @@ export const getAccountCardSimulation = async (req, res) => {
     realPages = realPages.map((p, idx) => ({ ...p, pageNumber: idx + 2 }));
     const pages = [buildCoverPage(account), ...realPages];
 
+    // totals treat the same type groupings as the simulation: deposit-like
+    // types roll into totalDeposited, withdrawal-like types into totalWithdrawn.
     const totalDeposited = round2(
-      txRes.rows.filter((t) => t.type === "deposit").reduce((s, t) => s + Number(t.amount), 0)
+      txRes.rows
+        .filter((t) => DEPOSIT_TYPES.has(t.type))
+        .reduce((s, t) => s + Number(t.amount), 0)
     );
     const totalWithdrawn = round2(
-      txRes.rows.filter((t) => t.type === "withdrawal").reduce((s, t) => s + Number(t.amount), 0)
+      txRes.rows
+        .filter((t) => WITHDRAWAL_TYPES.has(t.type))
+        .reduce((s, t) => s + Number(t.amount), 0)
     );
     const completedPages = realPages.filter((p) => p.status === "completed").length;
     const totalCommissionEarned = round2(realPages.reduce((s, p) => s + p.commissionTaken, 0));

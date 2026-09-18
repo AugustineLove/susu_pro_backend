@@ -18,3 +18,4 @@ entryBatchRoute.patch("/:code", updateEntryBatch);
 entryBatchRoute.delete("/:code", voidEntryBatch);
 entryBatchRoute.post("/:code/approve", approveEntryBatch);
 entryBatchRoute.post("/:code/reject", rejectEntryBatch);
+  
