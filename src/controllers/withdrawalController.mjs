@@ -1,5 +1,5 @@
 import pool from '../db.mjs';
-import { resolveAccountingRule } from '../services/accountingHelper.mjs';
+import { postJournalEntry, resolveAccountingRule } from '../services/accountingHelper.mjs';
 import { buildDateRangeFilter } from '../utils/dateRangeSafeParser.mjs';
 
 export const getWithdrawals = async (req, res) => {
@@ -331,7 +331,7 @@ export const reverseWithdrawal = async (req, res) => {
         createdBy: staffId,
         lines: [
           {
-            coaId: commissionRule.debitCoaId,
+            coaId: commissionRule.creditCoaId,
             dc: "debit",
             amount: commissionAmount,
             description: "Reverse commission income",
@@ -340,7 +340,7 @@ export const reverseWithdrawal = async (req, res) => {
             staffId,
           },
           {
-            coaId: commissionRule.creditCoaId,
+            coaId: commissionRule.debitCoaId,
             dc: "credit",
             amount: commissionAmount,
             description: "Restore customer deposit balance",
