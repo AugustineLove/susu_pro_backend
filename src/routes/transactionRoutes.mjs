@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { deductCommission, stakeMoney } from "../controllers/stakeController.mjs";
-import { approveTransaction, deleteTransaction, getCompanyTransactions, getDailyCollections, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction, reverseWithdrawal, transferBetweenAccounts } from "../controllers/transactionController.mjs";
-import { getWithdrawals } from "../controllers/withdrawalController.mjs";
+import { approveTransaction, deleteTransaction, getCompanyTransactions, getDailyCollections, getRecentTransactions, getTransactionsByAccount, getTransactionsByCustomer, getTransactionsByStaff, rejectTransaction, transferBetweenAccounts } from "../controllers/transactionController.mjs";
+import { getWithdrawals, reverseWithdrawal } from "../controllers/withdrawalController.mjs";
 import { bulkStakeMoney } from "../controllers/bulkTransactions.mjs";
 import { checkDayNotClosed } from "../middlewares/checkDayNotClosed.mjs";
 import { approveBackdatedTransaction, bulkApproveBackdatedTransactions, getPendingBackdatedSummary, getPendingBackdatedTransactions, rejectBackdatedTransaction } from "../controllers/backDatedController.mjs";
