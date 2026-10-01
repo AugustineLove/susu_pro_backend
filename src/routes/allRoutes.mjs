@@ -23,6 +23,7 @@ import cashVarianceRouter from './cashVarianceRoutes.mjs';
 import investmentRouter from './investmentRoutes.mjs';
 import chargesRouter from './chargesRoutes.mjs';
 import accountingRulesRouter from './accountingRulesRoute.mjs';
+import issueRouter from './issueRoutes.mjs';
 
 const allRoutes = Router();
 
@@ -49,5 +50,6 @@ allRoutes.use('/api/investments', investmentRouter);
 allRoutes.use('/api/charges', chargesRouter);
 allRoutes.use('/api/:companyId/accounting-rules', accountingRulesRouter);
 allRoutes.use('/api/entry-batches', entryBatchRoute);
+allRoutes.use('/api/issues', issueRouter);
 
 export default allRoutes;

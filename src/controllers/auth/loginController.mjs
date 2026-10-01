@@ -17,8 +17,11 @@ export const loginUser = async (req, res) => {
 
     if (rows.length > 0) {
       const company = rows[0];
-å
       // Compare password
+      console.log('EMAIL RECEIVED:', JSON.stringify(email));
+      console.log('COMPANY FOUND:', rows.length);
+      console.log('HASH:', company.password_hash);
+      console.log('PASSWORD RECEIVED:', JSON.stringify(password));
       const isMatch = await bcrypt.compare(password, company.password_hash);
       if (!isMatch) {
         return res
